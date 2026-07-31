@@ -1,45 +1,83 @@
-# [Project name]
+# TraderMind OS
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+ژورنال معاملاتی حرفه‌ای — نرم‌افزار دسکتاپ آفلاین برای ثبت، تحلیل و بهبود معاملات.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/tradermind run dev` — اجرا در Replit (پیش‌نمایش وب)
+- `pnpm run typecheck` — بررسی TypeScript کل پروژه
+- `pnpm run build` — typecheck + build کامل
+- `pnpm --filter @workspace/tradermind run test` — اجرای تست‌ها
+
+## ساخت setup.exe و APK (GitHub Actions)
+
+با tag زدن یک نسخه جدید، هر دو فرآیند خودکار اجرا می‌شوند:
+
+```bash
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+فایل‌های خروجی در بخش **Releases** گیت‌هاب قرار می‌گیرند:
+- `TraderMind-Setup-1.2.0.exe` (ویندوز — از workflow `build-electron.yml`)
+- `TraderMind-1.2.0.apk` (اندروید — از workflow `build-android.yml`)
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- pnpm workspaces، Node.js 20+، TypeScript 5.9
+- **Frontend:** React 19، Vite 7، Tailwind CSS v4، shadcn/ui
+- **Desktop:** Electron 36 + electron-builder (NSIS installer)
+- **Mobile:** Capacitor 7 + Android SDK
+- **Database:** Dexie (IndexedDB) — کاملاً آفلاین، بدون سرور
+- **State:** Zustand
+- **Charts:** Recharts
 
-## Where things live
+## ساختار پروژه
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+```
+artifacts/
+  tradermind/           # اپلیکیشن اصلی TraderMind OS
+    electron/           # فایل‌های اصلی Electron (main.ts, preload.ts)
+    src/                # کد React (pages, components, services, db)
+    public/             # آیکون و فایل‌های استاتیک
+    electron-builder.json   # تنظیمات بسته‌بندی نصب‌کننده
+    capacitor.config.ts     # تنظیمات Capacitor برای اندروید
+  api-server/           # Express API server (برای نسخه وب Replit)
+lib/                    # کتابخانه‌های مشترک
+.github/workflows/      # GitHub Actions برای ساخت خودکار
+  build-electron.yml    # ساخت .exe (ویندوز) و .dmg (مک)
+  build-android.yml     # ساخت .apk (اندروید)
+```
 
-## Architecture decisions
+## Architecture
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
-
-## Product
-
-_Describe the high-level user-facing capabilities of this app once they exist._
+- برنامه کاملاً آفلاین — تمام داده‌ها در IndexedDB (Dexie v4) ذخیره می‌شوند
+- در Replit به عنوان وب‌اپ اجرا می‌شود؛ در تولید به عنوان Electron desktop app
+- Router از hash-based navigation استفاده می‌کند تا هم در مرورگر و هم در `file://` کار کند
+- برای اندروید، Capacitor با `https://localhost` سرو می‌کند (نه `file://`)
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- زبان کد: TypeScript / کامنت‌های فارسی
+- نصب‌کننده: NSIS با پشتیبانی زبان فارسی
+- هدف: کاربران ایرانی
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- برای ساخت `.exe` حتماً از GitHub Actions استفاده کنید — Replit محیط Linux است
+- `android/` پوشه توسط `cap add android` در CI ایجاد می‌شود؛ نیازی به commit نیست
+- `electron-builder.json` فایل `public/icon.png` را برای آیکون استفاده می‌کند
+- `tsconfig.electron.json` جداگانه است و Electron main را کامپایل می‌کند
 
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Schema DB: `artifacts/tradermind/src/db/database.ts`
+- ورودی اپ: `artifacts/tradermind/src/App.tsx`
+- Electron main: `artifacts/tradermind/electron/main.ts`
+- تنظیمات build: `artifacts/tradermind/electron-builder.json`
+- Capacitor config: `artifacts/tradermind/capacitor.config.ts`
+- GitHub Actions: `.github/workflows/`
+
+## See also
+
+- `pnpm-workspace` skill — ساختار monorepo و TypeScript

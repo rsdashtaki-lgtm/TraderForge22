@@ -1,0 +1,107 @@
+name: Build TraderMind Android (APK)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    name: 🤖 ساخت اپلیکیشن اندروید (.apk)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup Java (برای Android SDK)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Vite (Capacitor output → dist/capacitor)
+        working-directory: artifacts/tradermind
+        run: pnpm run android:build:vite
+
+      - name: Add Android platform (اگر وجود ندارد)
+        working-directory: artifacts/tradermind
+        run: |
+          if [ ! -d "android" ]; then
+            pnpm exec cap add android
+          fi
+
+      - name: Sync Capacitor with web assets
+        working-directory: artifacts/tradermind
+        run: pnpm exec cap sync android
+
+      - name: Make Gradle executable
+        working-directory: artifacts/tradermind/android
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        working-directory: artifacts/tradermind/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Collect and rename APK
+        run: |
+          VERSION="${GITHUB_REF_NAME:-debug}"
+          mkdir -p release-apk
+          find artifacts/tradermind/android -name "app-debug.apk" -exec cp {} "release-apk/TraderMind-${VERSION}.apk" \;
+          ls -lh release-apk/
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TraderMind-Android-APK
+          path: release-apk/*.apk
+          retention-days: 30
+
+      - name: Add APK to GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-apk/*.apk
+          name: TraderMind OS ${{ github.ref_name }}
+          body: |
+            ## TraderMind OS ${{ github.ref_name }}
+
+            ### دانلود
+            | پلتفرم | فایل |
+            |--------|------|
+            | اندروید | `TraderMind-*.apk` |
+
+            ### نصب APK اندروید
+            ۱. فایل APK را دانلود کنید
+            ۲. در تنظیمات گوشی، **نصب از منابع ناشناس** را فعال کنید
+            ۳. فایل APK را باز کرده و نصب کنید
+
+            > ⚠️ این نسخه Debug است. برای نسخه Release (بدون هشدار اندروید) باید کلید امضا (keystore) تنظیم شود.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,49 +1,45 @@
-# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
+# ── Node ──────────────────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
 
-# compiled output
-dist
-tmp
-out-tsc
+# ── Build outputs ─────────────────────────────────────────────────────────────
+dist/
+dist-electron/
+dist-capacitor/
+build/
 *.tsbuildinfo
-.expo
-.expo-shared
 
-# dependencies
-node_modules
+# ── Electron ──────────────────────────────────────────────────────────────────
+artifacts/tradermind/electron/dist/
+artifacts/tradermind/dist/
+artifacts/tradermind/dist-electron/
 
-# IDEs and editors
-/.idea
-.project
-.classpath
-.c9/
-*.launch
-.settings/
-*.sublime-workspace
+# ── Android / Capacitor ───────────────────────────────────────────────────────
+# پوشه android توسط `cap add android` ایجاد می‌شود — در CI
+artifacts/tradermind/android/
+artifacts/tradermind/ios/
 
-# IDE - VSCode
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
 
-# misc
-/.sass-cache
-/connect.lock
-/coverage
-/libpeerconnection.log
-npm-debug.log
-yarn-error.log
-testem.log
-/typings
-
-# System Files
+# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+*.local
 
-.cursor/rules/nx-rules.mdc
-.github/instructions/nx.instructions.md
+# ── Editor ────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# Replit
+# ── Replit ────────────────────────────────────────────────────────────────────
+.replit
+replit.nix
 .cache/
-.local/
+
+# ── Attached assets (فایل‌های آپلودی موقت) ───────────────────────────────────
+attached_assets/
