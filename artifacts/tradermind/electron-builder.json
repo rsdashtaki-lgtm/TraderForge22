@@ -13,7 +13,8 @@
     "package.json"
   ],
   "extraMetadata": {
-    "main": "electron/dist/main.js"
+    "main": "electron/dist/main.js",
+    "type": "commonjs"
   },
   "win": {
     "target": [
