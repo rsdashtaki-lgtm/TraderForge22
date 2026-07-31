@@ -1,4 +1,4 @@
-name: Build TraderMind Electron (Windows + macOS)
+name: Build TraderMind Electron (Windows)
 
 on:
   push:
@@ -71,62 +71,19 @@ jobs:
             |--------|------|
             | ویندوز ۶۴ بیتی | `TraderMind-Setup-*.exe` |
 
-            ### نصب
-            فایل `.exe` را دانلود کنید و اجرا نمایید. نصب‌کننده گزینه انتخاب مسیر نصب را دارد.
+            ### نصب روی ویندوز
+            چون برنامه امضای دیجیتال ندارد، ویندوز هشدار SmartScreen نشان می‌دهد:
+
+            ۱. فایل `.exe` را دانلود کنید
+            ۲. روی آن راست‌کلیک کنید → **Properties**
+            ۳. تیک **Unblock** را بزنید → **OK**
+            ۴. فایل را اجرا کنید؛ اگر باز هشدار SmartScreen دیدید → **More info** → **Run anyway**
+
+            > این هشدار فقط به دلیل نبود امضای دیجیتال است و برنامه کاملاً امن است.
 
             ---
             برای اطلاعات بیشتر به [CHANGELOG](CHANGELOG.md) مراجعه کنید.
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  build-macos:
-    name: 🍎 ساخت دیسک‌ایمیج مک (.dmg)
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: '10'
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Build Vite renderer
-        working-directory: artifacts/tradermind
-        run: pnpm run electron:build:vite
-
-      - name: Compile Electron main
-        working-directory: artifacts/tradermind
-        run: pnpm run electron:compile
-
-      - name: Package installer (.dmg)
-        working-directory: artifacts/tradermind
-        run: pnpm exec electron-builder --mac --config electron-builder.json --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: TraderMind-macOS
-          path: artifacts/tradermind/dist-electron/*.dmg
-          retention-days: 30
-
-      - name: Add macOS DMG to Release (on tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/tradermind/dist-electron/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

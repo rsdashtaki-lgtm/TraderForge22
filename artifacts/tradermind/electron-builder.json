@@ -24,7 +24,8 @@
       }
     ],
     "icon": "public/icon.png",
-    "artifactName": "TraderMind-Setup-${version}.exe"
+    "artifactName": "TraderMind-Setup-${version}.exe",
+    "requestedExecutionLevel": "user"
   },
   "nsis": {
     "oneClick": false,
@@ -32,13 +33,9 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "TraderMind OS"
-  },
-  "mac": {
-    "target": [
-      { "target": "dmg", "arch": ["x64", "arm64"] }
-    ],
-    "icon": "public/icon.png",
-    "category": "public.app-category.finance"
+    "shortcutName": "TraderMind OS",
+    "unicode": true,
+    "deleteAppDataOnUninstall": false,
+    "runAfterFinish": true
   }
 }
