@@ -38,7 +38,7 @@ jobs:
 
       - name: Install Windows native packages for build tools
         working-directory: artifacts/tradermind
-        run: pnpm add @rollup/rollup-win32-x64-msvc @esbuild/win32-x64 lightningcss-win32-x64-msvc "@tailwindcss/oxide-win32-x64-msvc" --no-lockfile
+        run: pnpm add "@esbuild/win32-x64@0.27.3" @rollup/rollup-win32-x64-msvc lightningcss-win32-x64-msvc "@tailwindcss/oxide-win32-x64-msvc" --no-lockfile
 
       - name: Install Electron build tools (CI only)
         working-directory: artifacts/tradermind
