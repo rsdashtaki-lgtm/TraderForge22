@@ -36,6 +36,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
+      - name: Install Electron build tools (CI only)
+        working-directory: artifacts/tradermind
+        run: pnpm add -D electron@^36.4.0 electron-builder@^25.1.8 --no-lockfile
+
       - name: Build Vite renderer
         working-directory: artifacts/tradermind
         run: pnpm run electron:build:vite

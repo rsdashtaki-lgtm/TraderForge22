@@ -25,7 +25,7 @@
     ],
     "icon": "public/icon.png",
     "artifactName": "TraderMind-Setup-${version}.exe",
-    "requestedExecutionLevel": "user"
+    "requestedExecutionLevel": "asInvoker"
   },
   "nsis": {
     "oneClick": false,
