@@ -244,8 +244,8 @@ export default function StrategyBuilder() {
   };
 
   const handleUpdatePhase = async (phaseId: string, data: Partial<Phase>) => {
+    setPhases(prev => prev.map(p => p.id === phaseId ? { ...p, ...data } : p));
     await strategyService.updatePhase(phaseId, data);
-    setPhases(phases.map(p => p.id === phaseId ? { ...p, ...data } : p));
   };
 
   const handleDeletePhase = async (phaseId: string) => {
@@ -292,8 +292,8 @@ export default function StrategyBuilder() {
   };
 
   const handleUpdateStep = async (stepId: string, data: Partial<Step>) => {
+    setSteps(prev => prev.map(s => s.id === stepId ? { ...s, ...data } : s));
     await strategyService.updateStep(stepId, data);
-    setSteps(steps.map(s => s.id === stepId ? { ...s, ...data } : s));
   };
 
   const handleDeleteStep = async (stepId: string) => {
@@ -339,12 +339,14 @@ export default function StrategyBuilder() {
   };
 
   const handleUpdateRule = async (ruleId: string, data: Partial<Rule>) => {
+    setRules(prev => {
+      const next = { ...prev };
+      for (const stepId in next) {
+        next[stepId] = next[stepId].map(r => r.id === ruleId ? { ...r, ...data } : r);
+      }
+      return next;
+    });
     await strategyService.updateRule(ruleId, data);
-    const newRules = { ...rules };
-    for (const stepId in newRules) {
-      newRules[stepId] = newRules[stepId].map(r => r.id === ruleId ? { ...r, ...data } : r);
-    }
-    setRules(newRules);
   };
 
   const handleDeleteRule = async (ruleId: string) => {
