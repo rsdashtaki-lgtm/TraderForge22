@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from "../components/ui/alert";
 import {
   Download, Upload, AlertTriangle, CheckCircle2, Clock,
   FileArchive, RefreshCcw, Trash2, ChevronDown, ChevronUp,
-  ShieldCheck, Layers, XCircle, KeyRound, Eye, EyeOff, Lock, AlertCircle
+  ShieldCheck, Layers, FileText, XCircle, KeyRound, Eye, EyeOff, Lock, AlertCircle
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 import { appStorage } from "../services/storageService";
 import { HardDrive } from "lucide-react";
+import { wordExportService } from "../services/wordExportService";
 
 // ─────────────────────────────────────────────
 // ثوابت و انواع
@@ -117,6 +118,7 @@ export default function BackupRestore() {
 
   // ── Excel Export state
   const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportingWord, setExportingWord] = useState(false);
 
   const handleExcelExport = async () => {
     setExportingExcel(true);
@@ -127,6 +129,18 @@ export default function BackupRestore() {
       toast.error('خطا در ساخت فایل Excel. لطفاً دوباره تلاش کنید.');
     } finally {
       setExportingExcel(false);
+    }
+  };
+
+  const handleWordExport = async () => {
+    setExportingWord(true);
+    try {
+      await wordExportService.exportAllTrades();
+      toast.success('گزارش Word معاملات با موفقیت دانلود شد');
+    } catch {
+      toast.error('خطا در ساخت گزارش Word. لطفاً دوباره تلاش کنید.');
+    } finally {
+      setExportingWord(false);
     }
   };
 
@@ -373,6 +387,40 @@ export default function BackupRestore() {
           </div>
         </CardContent>
       </Card>
+
+       {/* ──── خروجی گزارش Word ──── */}
+       <Card>
+         <CardHeader>
+           <CardTitle className="flex items-center gap-2">
+             <FileText className="w-5 h-5 text-blue-500" />
+             گزارش Word معاملات
+           </CardTitle>
+           <CardDescription>
+             برای هر معامله یک بخش مستقل می‌سازد: جدول داده‌های عددی، جدول توضیحات و تحلیل، سپس تصاویر معامله به همان ترتیب.
+           </CardDescription>
+         </CardHeader>
+         <CardContent>
+           <div className="flex items-center justify-between gap-4 p-4 border rounded-lg bg-muted/20">
+             <div>
+               <p className="font-medium">دانلود گزارش کامل معاملات</p>
+               <p className="text-sm text-muted-foreground">
+                 فایل قابل باز شدن در Microsoft Word و برنامه‌های سازگار
+               </p>
+             </div>
+             <Button
+               onClick={handleWordExport}
+               disabled={exportingWord}
+               variant="outline"
+               className="flex items-center gap-2 shrink-0 border-blue-500/40 text-blue-500 hover:bg-blue-500/10"
+             >
+               {exportingWord
+                 ? <><RefreshCcw className="w-4 h-4 animate-spin" /> در حال ساخت...</>
+                 : <><FileText className="w-4 h-4" /> دانلود Word</>
+               }
+             </Button>
+           </div>
+         </CardContent>
+       </Card>
 
       {/* ──── بازیابی اطلاعات ──── */}
       <Card className={importStep !== 'idle' && importStep !== 'validating' ? 'border-primary/30' : ''}>

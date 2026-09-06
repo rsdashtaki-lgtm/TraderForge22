@@ -385,6 +385,7 @@ export default function Settings() {
   const store = useAppStore(
     useShallow(s => ({
        theme: s.theme, fontSize: s.fontSize, colorTheme: s.colorTheme, textColor: s.textColor,
+       backgroundTheme: s.backgroundTheme, backgroundStart: s.backgroundStart, backgroundEnd: s.backgroundEnd,
       analysisAutosave: s.analysisAutosave, analysisShowNextStep: s.analysisShowNextStep,
       analysisPhaseSummary: s.analysisPhaseSummary, analysisConfirmPhase: s.analysisConfirmPhase,
       analysisProgressBar: s.analysisProgressBar,
@@ -400,7 +401,8 @@ export default function Settings() {
       tradingTimeMode: s.tradingTimeMode, brokerUtcOffsetMinutes: s.brokerUtcOffsetMinutes,
       // setters
        setTheme: s.setTheme, setFontSize: s.setFontSize,
-       setColorTheme: s.setColorTheme, setTextColor: s.setTextColor,
+        setColorTheme: s.setColorTheme, setTextColor: s.setTextColor,
+       setBackgroundTheme: s.setBackgroundTheme, setBackgroundStart: s.setBackgroundStart, setBackgroundEnd: s.setBackgroundEnd,
       setAnalysisAutosave: s.setAnalysisAutosave, setAnalysisShowNextStep: s.setAnalysisShowNextStep,
       setAnalysisPhaseSummary: s.setAnalysisPhaseSummary, setAnalysisConfirmPhase: s.setAnalysisConfirmPhase,
       setAnalysisProgressBar: s.setAnalysisProgressBar,
@@ -596,6 +598,68 @@ export default function Settings() {
             <span className="h-3 w-3 rounded-full border border-border" style={{ backgroundColor: store.textColor === 'auto' ? 'hsl(var(--foreground))' : store.textColor }} />
             <span className="text-sm">نمونه متن اصلی</span>
             <span className="text-xs text-muted-foreground">متن کمکی برای بررسی کنتراست</span>
+          </div>
+        </div>
+        <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">پس‌زمینه و تم ترکیبی</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                از تم‌های آماده استفاده کنید یا دو رنگ دلخواه برای پس‌زمینه انتخاب کنید.
+              </p>
+            </div>
+            <Palette className="w-4 h-4 text-primary shrink-0" />
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {[
+              { value: 'plain', label: 'ساده', colors: ['#111827', '#111827'] },
+              { value: 'midnight', label: 'نیمه‌شب', colors: ['#0b1220', '#111827'] },
+              { value: 'ocean', label: 'اقیانوس', colors: ['#082f49', '#164e63'] },
+              { value: 'forest', label: 'جنگل', colors: ['#052e16', '#14532d'] },
+              { value: 'sunset', label: 'غروب', colors: ['#431407', '#7c2d12'] },
+              { value: 'lavender', label: 'اسطوخودوس', colors: ['#2e1065', '#4c1d95'] },
+            ].map(({ value, label, colors }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => store.setBackgroundTheme(value as any)}
+                className={cn(
+                  'flex items-center gap-2 rounded-lg border-2 p-2 text-xs font-medium transition-all',
+                  store.backgroundTheme === value
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'border-border hover:border-primary/40 text-muted-foreground'
+                )}
+              >
+                <span
+                  className="h-7 w-7 rounded-full border border-white/20 shadow-sm shrink-0"
+                  style={{ background: `linear-gradient(135deg, ${colors[0]}, ${colors[1]})` }}
+                />
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-3">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              رنگ شروع
+              <input
+                type="color"
+                value={store.backgroundStart}
+                onChange={e => store.setBackgroundStart(e.target.value as `#${string}`)}
+                className="h-8 w-10 cursor-pointer rounded-md border border-border bg-transparent p-1"
+                aria-label="رنگ شروع پس‌زمینه"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              رنگ پایان
+              <input
+                type="color"
+                value={store.backgroundEnd}
+                onChange={e => store.setBackgroundEnd(e.target.value as `#${string}`)}
+                className="h-8 w-10 cursor-pointer rounded-md border border-border bg-transparent p-1"
+                aria-label="رنگ پایان پس‌زمینه"
+              />
+            </label>
+            <span className="text-xs text-muted-foreground">انتخاب رنگ سفارشی، حالت «کاستوم» را فعال می‌کند.</span>
           </div>
         </div>
       </Section>

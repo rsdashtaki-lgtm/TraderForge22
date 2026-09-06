@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useAppStore, type ColorTheme, type TextColor } from '../store/useAppStore';
+import { useAppStore, type BackgroundTheme, type ColorTheme, type TextColor } from '../store/useAppStore';
 
 const COLOR_THEMES: Record<ColorTheme, string> = {
   blue: '#3b82f6',
@@ -8,6 +8,16 @@ const COLOR_THEMES: Record<ColorTheme, string> = {
   emerald: '#10b981',
   amber: '#f59e0b',
   rose: '#f43f5e',
+};
+
+const BACKGROUND_THEMES: Record<BackgroundTheme, [string, string]> = {
+  plain: ['#111827', '#111827'],
+  midnight: ['#0b1220', '#111827'],
+  ocean: ['#082f49', '#164e63'],
+  forest: ['#052e16', '#14532d'],
+  sunset: ['#431407', '#7c2d12'],
+  lavender: ['#2e1065', '#4c1d95'],
+  custom: ['#0b1220', '#111827'],
 };
 
 function hexToHsl(hex: string): string | null {
@@ -42,12 +52,15 @@ function getContrastForeground(hex: string): string {
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // PART 8 / Prompt 3 — selector برای جلوگیری از re-render غیرضروری
-  const { theme, fontSize, colorTheme, textColor, language } = useAppStore(
+  const { theme, fontSize, colorTheme, textColor, backgroundTheme, backgroundStart, backgroundEnd, language } = useAppStore(
     useShallow(s => ({
       theme: s.theme,
       fontSize: s.fontSize,
       colorTheme: s.colorTheme,
       textColor: s.textColor,
+      backgroundTheme: s.backgroundTheme,
+      backgroundStart: s.backgroundStart,
+      backgroundEnd: s.backgroundEnd,
       language: s.language,
     }))
   );
@@ -98,6 +111,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         .forEach(name => root.style.removeProperty(name));
     }
   }, [colorTheme, textColor]);
+
+  React.useEffect(() => {
+    const root = window.document.documentElement;
+    const [presetStart, presetEnd] = BACKGROUND_THEMES[backgroundTheme] ?? BACKGROUND_THEMES.midnight;
+    root.style.setProperty('--app-background-start', backgroundTheme === 'custom' ? backgroundStart : presetStart);
+    root.style.setProperty('--app-background-end', backgroundTheme === 'custom' ? backgroundEnd : presetEnd);
+  }, [backgroundTheme, backgroundStart, backgroundEnd]);
 
   // ── جهت‌نویسی و زبان (RTL/LTR)
   React.useEffect(() => {

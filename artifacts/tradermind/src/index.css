@@ -106,6 +106,8 @@
   --app-font-sans: 'Vazirmatn', 'Inter', sans-serif;
   --app-font-serif: Georgia, serif;
   --app-font-mono: Menlo, monospace;
+  --app-background-start: #0b1220;
+  --app-background-end: #111827;
   --radius: 0.75rem; 
 }
 
@@ -171,6 +173,8 @@
   }
   body {
     @apply font-sans antialiased bg-background text-foreground;
+    background-image: linear-gradient(135deg, var(--app-background-start), var(--app-background-end));
+    background-attachment: fixed;
     /* جلوگیری از over-scroll در iOS */
     overscroll-behavior: none;
     overflow-x: hidden;

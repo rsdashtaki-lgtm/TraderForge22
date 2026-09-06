@@ -8,6 +8,7 @@ export type ThemeMode = 'light' | 'dark' | 'system';
 export type FontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 export type ColorTheme = 'blue' | 'violet' | 'emerald' | 'amber' | 'rose';
 export type TextColor = 'auto' | `#${string}`;
+export type BackgroundTheme = 'plain' | 'midnight' | 'ocean' | 'forest' | 'sunset' | 'lavender' | 'custom';
 export type Language = 'fa'; // در آینده: | 'en'
 export type TradingTimeMode = 'device' | 'broker';
 
@@ -17,6 +18,9 @@ export interface AppSettings {
   fontSize: FontSize;
   colorTheme: ColorTheme;
   textColor: TextColor;
+  backgroundTheme: BackgroundTheme;
+  backgroundStart: `#${string}`;
+  backgroundEnd: `#${string}`;
   language: Language;
 
   // Sidebar
@@ -65,6 +69,9 @@ interface AppActions {
   setFontSize: (size: FontSize) => void;
   setColorTheme: (theme: ColorTheme) => void;
   setTextColor: (color: TextColor) => void;
+  setBackgroundTheme: (theme: BackgroundTheme) => void;
+  setBackgroundStart: (color: `#${string}`) => void;
+  setBackgroundEnd: (color: `#${string}`) => void;
   setLanguage: (lang: Language) => void;
   setAppName: (name: string) => void;
   setDefaultAccountId: (id: string | null) => void;
@@ -106,6 +113,9 @@ const defaults: AppSettings = {
   fontSize: 'md',
   colorTheme: 'blue',
   textColor: 'auto',
+  backgroundTheme: 'midnight',
+  backgroundStart: '#0b1220',
+  backgroundEnd: '#111827',
   language: 'fa',
   sidebarOpen: false,
   appName: 'TraderMind',
@@ -150,6 +160,9 @@ export const useAppStore = create<AppSettings & AppActions>()(
       setFontSize: (fontSize) => set({ fontSize }),
       setColorTheme: (colorTheme) => set({ colorTheme }),
       setTextColor: (textColor) => set({ textColor }),
+      setBackgroundTheme: (backgroundTheme) => set({ backgroundTheme }),
+      setBackgroundStart: (backgroundStart) => set({ backgroundStart, backgroundTheme: 'custom' }),
+      setBackgroundEnd: (backgroundEnd) => set({ backgroundEnd, backgroundTheme: 'custom' }),
       setLanguage: (language) => set({ language }),
       setAppName: (appName) => set({ appName }),
       setDefaultAccountId: (defaultAccountId) => set({ defaultAccountId }),
@@ -214,6 +227,15 @@ export const useAppStore = create<AppSettings & AppActions>()(
           || (typeof persisted?.textColor === 'string' && /^#[0-9a-f]{6}$/i.test(persisted.textColor))
           ? persisted.textColor
           : defaults.textColor,
+        backgroundTheme: ['plain', 'midnight', 'ocean', 'forest', 'sunset', 'lavender', 'custom'].includes(persisted?.backgroundTheme)
+          ? persisted.backgroundTheme
+          : defaults.backgroundTheme,
+        backgroundStart: typeof persisted?.backgroundStart === 'string' && /^#[0-9a-f]{6}$/i.test(persisted.backgroundStart)
+          ? persisted.backgroundStart
+          : defaults.backgroundStart,
+        backgroundEnd: typeof persisted?.backgroundEnd === 'string' && /^#[0-9a-f]{6}$/i.test(persisted.backgroundEnd)
+          ? persisted.backgroundEnd
+          : defaults.backgroundEnd,
         defaultAccountId: typeof persisted?.defaultAccountId === 'string' ? persisted.defaultAccountId : defaults.defaultAccountId,
         defaultTradingBoxId: typeof persisted?.defaultTradingBoxId === 'string' ? persisted.defaultTradingBoxId : defaults.defaultTradingBoxId,
         defaultSymbol: typeof persisted?.defaultSymbol === 'string' ? persisted.defaultSymbol : defaults.defaultSymbol,
