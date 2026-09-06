@@ -30,7 +30,11 @@ export const accountService = {
   },
 
   async delete(id: string): Promise<void> {
-    await db.accounts.delete(id);
+    await db.transaction('rw', [db.accounts, db.trades, db.tradingBoxes], async () => {
+      await db.trades.filter(trade => trade.accountId === id).modify({ accountId: null });
+      await db.tradingBoxes.filter(box => box.accountId === id).modify({ accountId: null });
+      await db.accounts.delete(id);
+    });
   },
 
   async ensureDefault(): Promise<Account> {

@@ -11,6 +11,7 @@ import { TradeScreenshot, TIMEFRAME_LABELS, TIMEFRAME_ORDER, MTFRelationship, MT
 import { Dialog, DialogContent, DialogTrigger } from './ui/dialog';
 import { ArrowDown, CheckCircle2, AlertTriangle, AlertCircle, Minus } from 'lucide-react';
 import { cn } from '../lib/utils';
+import StoredImage from './StoredImage';
 
 const TF_ROLE: Record<string, string> = {
   'W': 'تایم‌فریم هفتگی',
@@ -143,8 +144,8 @@ function MTFSequenceView({ screenshots, mtfRelationship }: Props) {
                   </div>
 
                   <div className="relative aspect-video">
-                    <img
-                      src={ss.dataUrl}
+                    <StoredImage
+                      source={ss}
                       alt={`${ss.timeframe} screenshot`}
                       className="w-full h-full object-cover"
                     />
@@ -180,7 +181,14 @@ function MTFSequenceView({ screenshots, mtfRelationship }: Props) {
                     </span>
                     {ss.label && <span className="text-sm">{ss.label}</span>}
                   </div>
-                  <img src={ss.dataUrl} alt={ss.label} className="w-full h-auto max-h-[75vh] object-contain" />
+                  <StoredImage
+                    source={ss}
+                    alt={ss.label}
+                    enableViewer
+                    showDownload
+                    filename={ss.label || `${ss.timeframe}-screenshot`}
+                    className="w-full h-auto max-h-[75vh] object-contain"
+                  />
                   {(ss.extractedFeatures ?? []).filter(f => f.confirmed !== false).length > 0 && (
                     <div className="px-3 py-2 flex flex-wrap gap-1.5">
                       {(ss.extractedFeatures ?? []).filter(f => f.confirmed !== false).map(f => (

@@ -22,6 +22,7 @@ import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
 import { t } from "../lib/i18n";
+import { getNetPnl } from "../lib/tradeHelpers";
 
 // ── PART 9 / Prompt 3 — Virtualized trade list ────────────────────────────────
 const ROW_HEIGHT = 49; // px — ارتفاع هر سطر جدول
@@ -125,7 +126,7 @@ function TradeListVirtualized({
                       <td className="px-4 py-3 tabular-nums">{trade.exitPrice ?? '-'}</td>
                       <td className={`px-4 py-3 tabular-nums font-medium ${trade.profitLoss
                         ? (trade.profitLoss > 0 ? 'text-emerald-500' : 'text-rose-500') : ''}`}>
-                        {trade.profitLoss !== null ? `$${trade.profitLoss.toFixed(2)}` : '-'}
+                        {getNetPnl(trade) !== null ? `$${getNetPnl(trade)!.toFixed(2)}` : '-'}
                       </td>
                       <td className="px-4 py-3 tabular-nums">
                         {trade.rMultiple !== null ? `${trade.rMultiple}R` : '-'}
@@ -214,7 +215,7 @@ function TradeListVirtualized({
                         <div className="text-muted-foreground text-[10px] uppercase mb-0.5">سود/زیان</div>
                         <div className={`font-medium ${trade.profitLoss
                           ? (trade.profitLoss > 0 ? 'text-emerald-500' : 'text-rose-500') : ''}`}>
-                          {trade.profitLoss !== null ? `$${trade.profitLoss.toFixed(2)}` : '-'}
+                          {getNetPnl(trade) !== null ? `$${getNetPnl(trade)!.toFixed(2)}` : '-'}
                         </div>
                       </div>
                       <div className="text-right">
@@ -257,6 +258,45 @@ const ADHERENCE_FA: Record<string, string> = {
   fully: 'کاملاً', mostly: 'تا حد زیادی', partially: 'کمی', not: 'اصلاً',
 };
 
+type TradeJournalFilters = {
+  search: string;
+  result: string;
+  direction: string;
+  strategyId: string;
+  emotion: string;
+  adherenceRating: string;
+  dateFrom: string;
+  dateTo: string;
+  accountId: string;
+  boxId: string;
+};
+
+function getRouteSearch(location: string): string {
+  if (location.includes('?')) return location.slice(location.indexOf('?') + 1);
+  if (typeof window !== 'undefined' && window.location.protocol === 'file:') {
+    const hash = window.location.hash.replace(/^#/, '');
+    const queryIndex = hash.indexOf('?');
+    return queryIndex >= 0 ? hash.slice(queryIndex + 1) : '';
+  }
+  return typeof window !== 'undefined' ? window.location.search.replace(/^\?/, '') : '';
+}
+
+function buildTradeJournalPath(filters: TradeJournalFilters): string {
+  const params = new URLSearchParams();
+  const defaults: Record<keyof TradeJournalFilters, string> = {
+    search: '', result: 'all', direction: 'all', strategyId: 'all',
+    emotion: 'all', adherenceRating: 'all', dateFrom: '', dateTo: '',
+    accountId: 'all', boxId: 'all',
+  };
+
+  (Object.keys(defaults) as (keyof TradeJournalFilters)[]).forEach(key => {
+    if (filters[key] !== defaults[key]) params.set(key, filters[key]);
+  });
+
+  const query = params.toString();
+  return query ? `/journal/trades?${query}` : '/journal/trades';
+}
+
 export default function TradeJournal() {
   const [location, setLocation] = useLocation();
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -271,11 +311,19 @@ export default function TradeJournal() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
   // خواندن پارامترهای URL برای پیش‌فیلتر (مثلاً ?boxId=xxx از صفحه باکس‌ها)
-  const urlParams = useMemo(() => new URLSearchParams(location.includes('?') ? location.split('?')[1] : ''), [location]);
+  const urlParams = useMemo(() => new URLSearchParams(getRouteSearch(location)), [location]);
 
-  const [filters, setFilters] = useState({
-    search: '', result: 'all', direction: 'all', strategyId: 'all',
-    emotion: 'all', adherenceRating: 'all', dateFrom: '', dateTo: '',
+  const [filters, setFilters] = useState<TradeJournalFilters>({
+    // The URL is the source of truth so the filter survives list → detail →
+    // edit → save navigation and a page remount.
+    search: urlParams.get('search') || '',
+    result: urlParams.get('result') || 'all',
+    direction: urlParams.get('direction') || 'all',
+    strategyId: urlParams.get('strategyId') || 'all',
+    emotion: urlParams.get('emotion') || 'all',
+    adherenceRating: urlParams.get('adherenceRating') || 'all',
+    dateFrom: urlParams.get('dateFrom') || '',
+    dateTo: urlParams.get('dateTo') || '',
     accountId: urlParams.get('accountId') || 'all',
     boxId: urlParams.get('boxId') || 'all',
   });
@@ -285,7 +333,7 @@ export default function TradeJournal() {
     accountService.getAll().then(setAccounts);
     tradingBoxService.getAll().then(setTradingBoxes);
     // اگر فیلتر URL وجود داشت، پنل فیلتر را باز کن
-    if (urlParams.get('boxId') || urlParams.get('accountId')) setFiltersOpen(true);
+    if ([...urlParams.keys()].length > 0) setFiltersOpen(true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadData(); }, [filters]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -306,8 +354,13 @@ export default function TradeJournal() {
     setLoading(false);
   };
 
-  const handleFilterChange = (key: string, value: string) =>
-    setFilters(prev => ({ ...prev, [key]: value }));
+  const handleFilterChange = (key: keyof TradeJournalFilters, value: string) => {
+    setFilters(prev => {
+      const next = { ...prev, [key]: value };
+      setLocation(buildTradeJournalPath(next));
+      return next;
+    });
+  };
 
   const handleToggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -336,11 +389,12 @@ export default function TradeJournal() {
   };
 
   const clearFilters = () => {
-    setFilters({
+    const cleared: TradeJournalFilters = {
       search: '', result: 'all', direction: 'all', strategyId: 'all',
       emotion: 'all', adherenceRating: 'all', dateFrom: '', dateTo: '',
       accountId: 'all', boxId: 'all',
-    });
+    };
+    setFilters(cleared);
     // حذف پارامترهای URL
     setLocation('/journal/trades');
   };
@@ -512,13 +566,13 @@ export default function TradeJournal() {
                   <CreditCard className="w-3 h-3" /> حساب معاملاتی
                 </div>
                 <Select value={filters.accountId} onValueChange={v => handleFilterChange('accountId', v)}>
-                  <SelectTrigger className="h-9 bg-background"><SelectValue /></SelectTrigger>
+                  <SelectTrigger dir="rtl" className="h-auto min-h-9 bg-background whitespace-normal [&>span]:!line-clamp-none [&>span]:!whitespace-normal"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">همه حساب‌ها</SelectItem>
                     <SelectItem value="none_set">بدون حساب</SelectItem>
                     {accounts.map(a => (
                       <SelectItem key={a.id} value={a.id}>
-                        <span className="flex items-center gap-2">
+                        <span className="flex min-w-0 items-center gap-2 whitespace-normal break-words text-right" dir="rtl">
                           <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
                           {a.name}
                         </span>
@@ -643,7 +697,7 @@ export default function TradeJournal() {
       ) : (
         <TradeListVirtualized
           trades={trades}
-          onSelect={id => setLocation(`/journal/trades/${id}`)}
+          onSelect={id => setLocation(`/journal/trades/${id}?returnTo=${encodeURIComponent(buildTradeJournalPath(filters))}`)}
           selectedIds={selectedIds}
           onToggle={handleToggleSelect}
           onSelectAll={handleSelectAll}

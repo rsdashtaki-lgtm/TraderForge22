@@ -15,7 +15,7 @@ import {
   BookOpen, Zap, AlertTriangle, CheckCircle2, TrendingUp, TrendingDown,
   Tag, Grid3x3, List, Filter, Save, FolderPlus, Brain, ArrowRight,
   Shield, History, Target, Sparkles, Info, Package, RotateCcw,
-  SlidersHorizontal, Calendar, Clock, Globe2, Users
+  SlidersHorizontal, Calendar, Clock, Globe2, Users, MonitorUp
 } from 'lucide-react';
 import { db, ChartScreenshot, ScreenshotCollection, VisualPattern, ScreenshotGroup, Trade } from '../db/database';
 import {
@@ -36,6 +36,7 @@ import {
 } from '../types/chartScreenshot';
 import { VisualFeature, ScreenshotAnnotation, FEATURE_CATEGORIES, FEATURE_LABELS } from '../types/screenshot';
 import AnnotationCanvas from '../components/AnnotationCanvas';
+import StoredImage, { useStoredImageUrl } from '../components/StoredImage';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -48,7 +49,23 @@ import { cn } from '../lib/utils';
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function uid() { return crypto.randomUUID(); }
+function uid() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `screenshot_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result);
+      else reject(new Error('خواندن تصویر نتیجه‌ای نداشت'));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('خواندن تصویر ناموفق بود'));
+    reader.onabort = () => reject(new Error('خواندن تصویر لغو شد'));
+    reader.readAsDataURL(file);
+  });
+}
 function safeJson<T>(str: string | null | undefined, fallback: T): T {
   if (!str) return fallback;
   try { return JSON.parse(str) as T; } catch { return fallback; }
@@ -171,6 +188,7 @@ function GalleryTab({ allTrades, onRefresh }: { allTrades: Trade[]; onRefresh: (
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const qc = useQueryClient();
 
@@ -209,8 +227,7 @@ function GalleryTab({ allTrades, onRefresh }: { allTrades: Trade[]; onRefresh: (
           const c = await compressImage(file, { maxWidth: 1600, maxHeight: 1200, quality: 0.85 });
           dataUrl = c.dataUrl;
         } catch {
-          const reader = new FileReader();
-          dataUrl = await new Promise<string>(res => { reader.onload = () => res(reader.result as string); reader.readAsDataURL(file); });
+          dataUrl = await readFileAsDataUrl(file);
         }
         const quality = await assessImageQuality(dataUrl, file.size);
         await saveChartScreenshot({
@@ -229,8 +246,41 @@ function GalleryTab({ allTrades, onRefresh }: { allTrades: Trade[]; onRefresh: (
       await qc.invalidateQueries({ queryKey: ['chart-screenshots'] });
       onRefresh();
       toast.success('اسکرین‌شات‌ها اضافه شدند');
+    } catch (error) {
+      console.error('[ScreenshotIntelligence] upload failed', error);
+      toast.error(error instanceof Error ? error.message : 'آپلود اسکرین‌شات ناموفق بود');
     } finally { setIsProcessing(false); }
   }, [qc, onRefresh]);
+
+  const captureScreen = async () => {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      toast.error('گرفتن تصویر از صفحه در این دستگاه پشتیبانی نمی‌شود؛ از آپلود یا دوربین استفاده کنید.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      video.muted = true;
+      await video.play();
+      await new Promise<void>(resolve => {
+        if (video.readyState >= 2) resolve();
+        else video.addEventListener('loadeddata', () => resolve(), { once: true });
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
+      canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
+      stream.getTracks().forEach(track => track.stop());
+      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('ساخت تصویر از صفحه ناموفق بود');
+      await handleFiles([new File([blob], `screen-${Date.now()}.png`, { type: 'image/png' })]);
+    } catch (error) {
+      if ((error as DOMException)?.name !== 'AbortError') {
+        toast.error('گرفتن تصویر از صفحه انجام نشد');
+      }
+    }
+  };
 
   const handleDelete = async (id: string) => {
     await deleteChartScreenshot(id);
@@ -250,6 +300,14 @@ function GalleryTab({ allTrades, onRefresh }: { allTrades: Trade[]; onRefresh: (
         </Button>
         <input ref={fileInputRef} type="file" accept="image/png,image/jpg,image/jpeg,image/webp" multiple className="hidden"
           onChange={e => { const f = Array.from(e.target.files ?? []); if (f.length) handleFiles(f); e.target.value = ''; }} />
+        <Button size="sm" variant="outline" className="gap-2" onClick={() => cameraInputRef.current?.click()} disabled={isProcessing}>
+          <Camera className="w-4 h-4" /> دوربین
+        </Button>
+        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden"
+          onChange={e => { const f = Array.from(e.target.files ?? []); if (f.length) handleFiles(f); e.target.value = ''; }} />
+        <Button size="sm" variant="outline" className="gap-2" onClick={() => void captureScreen()} disabled={isProcessing}>
+          <MonitorUp className="w-4 h-4" /> تصویر از صفحه
+        </Button>
         <Input placeholder="فیلتر نماد..." value={filterSymbol} onChange={e => setFilterSymbol(e.target.value)} className="w-32 h-8 text-sm" />
         <Select value={filterType} onValueChange={v => setFilterType(v as any)}>
           <SelectTrigger className="w-36 h-8 text-xs"><SelectValue placeholder="نوع" /></SelectTrigger>
@@ -342,7 +400,7 @@ function ScreenshotCard({ ss, isSelected, onSelect, onDelete, collections }: {
       onClick={onSelect}
     >
       <div className="aspect-video relative overflow-hidden bg-black/20">
-        <img src={ss.dataUrl} alt={ss.label ?? ''} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+        <StoredImage source={ss} alt={ss.label ?? ''} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
         {qScore !== null && (
           <span className={cn('absolute top-1.5 right-1.5 text-[10px] px-1 py-0.5 rounded bg-black/70 font-mono',
             qScore >= 70 ? 'text-green-400' : qScore >= 40 ? 'text-amber-400' : 'text-red-400')}>
@@ -412,36 +470,56 @@ function ScreenshotDetailPanel({ ss, allTrades, allScreenshots, onClose, onUpdat
   const [annotations, setAnnotations] = useState<ScreenshotAnnotation[]>(safeJson<ScreenshotAnnotation[]>(ss.annotations, []));
   const [similarMatches, setSimilarMatches] = useState<any[]>([]);
   const qc = useQueryClient();
+  const annotationImageUrl = useStoredImageUrl(ss);
 
   useEffect(() => {
-    if (tab === 'similar') {
-      findSimilarChartScreenshots(ss.id, { minScore: 20, limit: 8 }).then(setSimilarMatches);
-    }
+    if (tab !== 'similar') return;
+    let cancelled = false;
+    findSimilarChartScreenshots(ss.id, { minScore: 20, limit: 8 })
+      .then(matches => { if (!cancelled) setSimilarMatches(matches); })
+      .catch(error => {
+        if (!cancelled) {
+          console.error('[ScreenshotIntelligence] similarity search failed', error);
+          setSimilarMatches([]);
+          toast.error('جستجوی تصاویر مشابه انجام نشد');
+        }
+      });
+    return () => { cancelled = true; };
   }, [tab, ss.id]);
 
   const save = async () => {
-    await onUpdate({
-      ...form,
-      symbol: form.symbol || null,
-      timeframe: form.timeframe || null,
-      date: form.date || null,
-      time: form.time || null,
-      session: form.session || null,
-      direction: form.direction || null,
-      setup: form.setup || null,
-      notes: form.notes || null,
-      label: form.label || null,
-      patternTags: JSON.stringify(patternTags),
-      customTags: JSON.stringify(customTags),
-      annotations: JSON.stringify(annotations),
-    });
-    setEditing(false);
-    toast.success('ذخیره شد');
+    try {
+      await onUpdate({
+        ...form,
+        symbol: form.symbol || null,
+        timeframe: form.timeframe || null,
+        date: form.date || null,
+        time: form.time || null,
+        session: form.session || null,
+        direction: form.direction || null,
+        setup: form.setup || null,
+        notes: form.notes || null,
+        label: form.label || null,
+        patternTags: JSON.stringify(patternTags),
+        customTags: JSON.stringify(customTags),
+        annotations: JSON.stringify(annotations),
+      });
+      setEditing(false);
+      toast.success('ذخیره شد');
+    } catch (error) {
+      console.error('[ScreenshotIntelligence] screenshot update failed', error);
+      toast.error('ذخیره اطلاعات اسکرین‌شات انجام نشد');
+    }
   };
 
   const saveAnnotations = async () => {
-    await onUpdate({ annotations: JSON.stringify(annotations) });
-    toast.success('حاشیه‌نویسی ذخیره شد');
+    try {
+      await onUpdate({ annotations: JSON.stringify(annotations) });
+      toast.success('حاشیه‌نویسی ذخیره شد');
+    } catch (error) {
+      console.error('[ScreenshotIntelligence] annotation update failed', error);
+      toast.error('ذخیره حاشیه‌نویسی انجام نشد');
+    }
   };
 
   const toggleTag = (tag: string) => {
@@ -485,7 +563,14 @@ function ScreenshotDetailPanel({ ss, allTrades, allScreenshots, onClose, onUpdat
       <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* تصویر */}
         <div className="rounded-lg overflow-hidden border border-white/10">
-          <img src={ss.dataUrl} alt={ss.label ?? ''} className="w-full h-auto max-h-72 object-contain bg-black/30" />
+          <StoredImage
+            source={ss}
+            alt={ss.label ?? ''}
+            enableViewer
+            showDownload
+            filename={ss.label || 'chart-screenshot'}
+            className="w-full h-auto max-h-72 object-contain bg-black/30"
+          />
         </div>
 
         {/* پنل تب‌دار */}
@@ -633,7 +718,7 @@ function ScreenshotDetailPanel({ ss, allTrades, allScreenshots, onClose, onUpdat
               <p className="text-xs text-muted-foreground">تصویر اصلی دست‌نخورده می‌ماند — حاشیه‌نویسی‌ها جداگانه ذخیره می‌شوند</p>
               <div className="rounded-lg overflow-hidden border border-white/10">
                 <AnnotationCanvas
-                  imageDataUrl={ss.dataUrl}
+                  imageDataUrl={annotationImageUrl ?? ''}
                   annotations={annotations}
                   onChange={setAnnotations}
                 />
@@ -658,7 +743,7 @@ function ScreenshotDetailPanel({ ss, allTrades, allScreenshots, onClose, onUpdat
                     {similarMatches.map(m => (
                       <div key={m.screenshotId} className="rounded-lg border border-white/10 overflow-hidden">
                         <div className="aspect-video relative overflow-hidden">
-                          <img src={m.dataUrl} alt="" className="w-full h-full object-cover" />
+                          <StoredImage source={m} alt="" className="w-full h-full object-cover" />
                           <span className="absolute top-1 right-1 text-[10px] px-1 py-0.5 rounded bg-black/70 text-white">{m.matchScore}٪</span>
                         </div>
                         <div className="p-1.5 text-xs">
@@ -791,7 +876,7 @@ function GroupsTab() {
                       {ssInGroup.map(ss => (
                         <div key={ss.id} className="relative group rounded-lg overflow-hidden border border-white/10">
                           <div className="aspect-video">
-                            <img src={ss.dataUrl} alt={ss.label ?? ''} className="w-full h-full object-cover" />
+                            <StoredImage source={ss} alt={ss.label ?? ''} className="w-full h-full object-cover" />
                           </div>
                           <div className="absolute bottom-0 inset-x-0 bg-black/60 px-1.5 py-1">
                             <p className="text-[9px] text-white truncate">{ss.timeframe ?? ss.label ?? '—'}</p>
@@ -1003,7 +1088,7 @@ function PatternsTab({ allTrades }: { allTrades: Trade[] }) {
                     <div className="grid grid-cols-3 gap-1.5">
                       {ssInPattern.slice(0, 6).map(ss => (
                         <div key={ss.id} className="aspect-video rounded overflow-hidden border border-white/10">
-                          <img src={ss.dataUrl} alt="" className="w-full h-full object-cover" />
+                          <StoredImage source={ss} alt="" className="w-full h-full object-cover" />
                         </div>
                       ))}
                     </div>
@@ -1128,7 +1213,7 @@ function CollectionsTab() {
                   <div className="grid grid-cols-2 gap-1">
                     {preview.map(ss => (
                       <div key={ss.id} className="aspect-video rounded overflow-hidden bg-black/20">
-                        <img src={ss.dataUrl} alt="" className="w-full h-full object-cover" />
+                        <StoredImage source={ss} alt="" className="w-full h-full object-cover" />
                       </div>
                     ))}
                   </div>
@@ -1170,7 +1255,7 @@ function CollectionsTab() {
                 {colScreenshots.map(ss => (
                   <div key={ss.id} className="relative group rounded-lg overflow-hidden border border-white/10">
                     <div className="aspect-video">
-                      <img src={ss.dataUrl} alt={ss.label ?? ''} className="w-full h-full object-cover" />
+                      <StoredImage source={ss} alt={ss.label ?? ''} className="w-full h-full object-cover" />
                     </div>
                     <div className="p-1.5 text-xs">
                       <p className="truncate">{ss.label ?? 'اسکرین‌شات'}</p>
@@ -1454,6 +1539,9 @@ function BriefingTab({ allTrades }: { allTrades: Trade[] }) {
     try {
       const result = await generateVisualBriefing(symbol || null, setup || null, selectedTags, allTrades);
       setBriefing(result);
+    } catch (error) {
+      console.error('[ScreenshotIntelligence] briefing generation failed', error);
+      toast.error('تولید بریفینگ بصری انجام نشد');
     } finally {
       setIsLoading(false);
     }
@@ -1528,7 +1616,7 @@ function BriefingTab({ allTrades }: { allTrades: Trade[] }) {
                   {briefing.similarScreenshots.map((m: any) => (
                     <div key={m.screenshotId} className="rounded-lg border border-white/10 overflow-hidden">
                       <div className="aspect-video relative">
-                        <img src={m.dataUrl} alt="" className="w-full h-full object-cover" />
+                        <StoredImage source={m} alt="" className="w-full h-full object-cover" />
                         <span className="absolute top-1 right-1 text-[10px] px-1 py-0.5 rounded bg-black/70 text-white">{m.matchScore}٪</span>
                       </div>
                       <div className="p-1.5 text-xs">

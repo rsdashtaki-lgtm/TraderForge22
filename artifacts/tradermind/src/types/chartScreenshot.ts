@@ -125,6 +125,7 @@ export interface ChartSimilarityMatch {
   matchScore: number;
   matchedTags: string[];
   dataUrl: string;
+  imageBlob: Blob | null;
   label: string | null;
   linkedTradeId: string | null;
   createdAt: number;

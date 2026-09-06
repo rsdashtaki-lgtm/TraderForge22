@@ -15,6 +15,7 @@ import {
   ArrowRight, Calendar, FileText, Tag, X, SlidersHorizontal,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { Input } from '../components/ui/input';
 
 // ── انواع نتایج ──────────────────────────────────────────────────────────────
 
@@ -246,7 +247,7 @@ export default function SearchPage() {
       {/* نوار جستجو */}
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-        <input
+        <Input
           ref={inputRef}
           type="search"
           value={query}

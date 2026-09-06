@@ -7,6 +7,7 @@
 
 import { db, ChartScreenshot, ScreenshotGroup, VisualPattern, ScreenshotCollection, Trade } from '../db/database';
 import { median, isWin, isLoss, isClosed } from '../lib/tradeHelpers';
+import { getTradingDateParts } from '../lib/tradingTime';
 import { VisualFeature } from '../types/screenshot';
 import {
   PatternPerformanceStats,
@@ -291,6 +292,7 @@ export async function findSimilarChartScreenshots(
       matchScore: score,
       matchedTags,
       dataUrl: ss.dataUrl,
+      imageBlob: ss.imageBlob ?? null,
       label: ss.label,
       linkedTradeId: ss.tradeId,
       createdAt: ss.createdAt,
@@ -406,7 +408,7 @@ export function computePatternByDay(trades: Trade[], tag: string): PatternByDay[
   for (let day = 0; day <= 6; day++) {
     const dayTrades = closedTrades.filter(t => {
       const tags = safeJson<string[]>(t.tags, []);
-      const d = new Date(t.openedAt).getDay();
+      const d = getTradingDateParts(t.openedAt).dayOfWeek;
       return tags.includes(tag) && d === day;
     });
     if (dayTrades.length === 0) continue;
@@ -666,6 +668,7 @@ export async function generateVisualBriefing(
         matchScore: score,
         matchedTags,
         dataUrl: ss.dataUrl,
+        imageBlob: ss.imageBlob ?? null,
         label: ss.label,
         linkedTradeId: ss.tradeId,
         createdAt: ss.createdAt,

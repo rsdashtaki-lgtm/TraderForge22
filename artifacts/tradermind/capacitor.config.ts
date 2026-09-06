@@ -17,7 +17,10 @@ const config: CapacitorConfig = {
     },
     // اجازه دسترسی به اینترنت برای به‌روزرسانی‌های آینده
     allowMixedContent: false,
-    captureInput: true,
+    // از InputConnection جایگزین Capacitor استفاده نکن؛ این حالت با
+    // دیکتهٔ صوتی بعضی کیبوردهای Android سازگار نیست. WebView باید مسیر
+    // استاندارد IME خود Android را برای تایپ و voice typing استفاده کند.
+    captureInput: false,
     webContentsDebuggingEnabled: false,
   },
   plugins: {

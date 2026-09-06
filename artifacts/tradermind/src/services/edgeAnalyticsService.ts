@@ -4,6 +4,7 @@
  */
 import { Trade } from '../db/database';
 import { isWin, isLoss, isClosed, median } from '../lib/tradeHelpers';
+import { getTradingDateKey, getTradingDateParts } from '../lib/tradingTime';
 
 // ── Session Definitions ────────────────────────────────────────────────────
 
@@ -1144,7 +1145,7 @@ export function filterCalendarMonths(
   classified.filter(t => filteredIds.has(t.id)).forEach(t => {
     const dateStr = t._dateLocal;
     if (!calendarMap.has(dateStr)) {
-      calendarMap.set(dateStr, { date: dateStr, dayOfWeek: new Date(t.openedAt).getUTCDay(), trades: 0, totalR: null, wins: 0, losses: 0, sessions: [] });
+      calendarMap.set(dateStr, { date: dateStr, dayOfWeek: getTradingDateParts(t.openedAt).dayOfWeek, trades: 0, totalR: null, wins: 0, losses: 0, sessions: [] });
     }
     const day = calendarMap.get(dateStr)!;
     day.trades++;

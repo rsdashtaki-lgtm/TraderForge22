@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import { analysisService } from "../services/analysisService";
 import { strategyService } from "../services/strategyService";
-import { db, AnalysisSession, Strategy, Phase, Step, Trade } from "../db/database";
+import { db, AnalysisSession, Strategy, Phase, Step, Rule, Trade } from "../db/database";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Label } from "../components/ui/label";
@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { openImagePicker, fileToCompressedDataUrl } from "../lib/imageCompression";
 import { extractInitialFeatures, findSimilarScreenshots } from "../services/visualAnalysisService";
 import VisualSimilarityPanel from "../components/VisualSimilarityPanel";
+import StoredImage from "../components/StoredImage";
 import { TradeScreenshot } from "../types/screenshot";
 
 type ViewMode = 'runner' | 'phaseSummary' | 'finalDecision' | 'finished';
@@ -31,10 +32,12 @@ export default function SessionRunner() {
   const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [phases, setPhases] = useState<Phase[]>([]);
   const [steps, setSteps] = useState<Record<string, Step[]>>({});
+  const [rules, setRules] = useState<Record<string, Rule[]>>({});
   const [currentPhaseIndex, setCurrentPhaseIndex] = useState(0);
   const [results, setResults] = useState<Record<string, { value: any; answeredAt: number }>>({});
   const [viewMode, setViewMode] = useState<ViewMode>('runner');
   const [finalDecisionReason, setFinalDecisionReason] = useState('');
+  const [freeNotes, setFreeNotes] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [imageStepId, setImageStepId] = useState<string | null>(null);
   const [allTrades, setAllTrades] = useState<Trade[]>([]);
@@ -49,6 +52,7 @@ export default function SessionRunner() {
     if (!sess) return;
     setSession(sess);
     setResults(JSON.parse(sess.stepResults || '{}'));
+    setFreeNotes(sess.notes || '');
 
     const strat = await strategyService.getStrategyById(sess.strategyId);
     if (!strat) return;
@@ -61,6 +65,13 @@ export default function SessionRunner() {
       stps[p.id] = await strategyService.getStepsByPhaseId(p.id);
     }
     setSteps(stps);
+    const loadedRules: Record<string, Rule[]> = {};
+    for (const phaseSteps of Object.values(stps)) {
+      for (const step of phaseSteps) {
+        loadedRules[step.id] = await strategyService.getRulesByStepId(step.id);
+      }
+    }
+    setRules(loadedRules);
 
     if (sess.currentPhaseId) {
       const idx = phs.findIndex(p => p.id === sess.currentPhaseId);
@@ -93,11 +104,19 @@ export default function SessionRunner() {
     openImagePicker({
       accept: 'image/*',
       onSelect: async (files) => {
-        const file = files[0];
-        if (!file) return;
+        if (!files.length) return;
         try {
-          const dataUrl = await fileToCompressedDataUrl(file, { maxWidth: 1280, quality: 0.82 });
-          handleUpdateResult(stepId, dataUrl);
+          const dataUrls = await Promise.all(files.map(file =>
+            fileToCompressedDataUrl(file, { maxWidth: 1280, quality: 0.82 })
+          ));
+          setResults(current => {
+            const old = current[stepId]?.value;
+            const existing = Array.isArray(old) ? old : old ? [old] : [];
+            const newResults = { ...current, [stepId]: { value: [...existing, ...dataUrls], answeredAt: Date.now() } };
+            void saveResults(newResults);
+            return newResults;
+          });
+          hasInteractedRef.current = true;
         } catch {
           toast.error('خطا در بارگذاری تصویر');
         }
@@ -106,13 +125,30 @@ export default function SessionRunner() {
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!imageStepId || !e.target.files?.[0]) return;
-    const file = e.target.files[0];
-    const reader = new FileReader();
-    reader.onload = () => handleUpdateResult(imageStepId, reader.result as string);
-    reader.readAsDataURL(file);
+    if (!imageStepId || !e.target.files?.length) return;
+    const files = Array.from(e.target.files);
+    Promise.all(files.map(file => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    }))).then(dataUrls => {
+      setResults(current => {
+        const old = current[imageStepId]?.value;
+        const existing = Array.isArray(old) ? old : old ? [old] : [];
+        const newResults = { ...current, [imageStepId]: { value: [...existing, ...dataUrls], answeredAt: Date.now() } };
+        void saveResults(newResults);
+        return newResults;
+      });
+      hasInteractedRef.current = true;
+    }).catch(() => toast.error('خطا در بارگذاری تصویر'));
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
+
+  const imageValues = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === 'string')
+      : typeof value === 'string' && value ? [value] : [];
 
   const currentPhase = phases[currentPhaseIndex];
   const currentPhaseSteps = currentPhase ? steps[currentPhase.id] || [] : [];
@@ -471,6 +507,7 @@ export default function SessionRunner() {
         type="file"
         accept="image/*"
         capture="environment"
+        multiple
         className="hidden"
         onChange={handleImageUpload}
       />
@@ -534,6 +571,21 @@ export default function SessionRunner() {
 
       {/* کارت‌های گام‌ها */}
       <div className="flex-1 overflow-y-auto min-h-0 pb-28">
+        <Card className="mb-5 border-primary/20 bg-primary/5">
+          <CardContent className="p-4">
+            <Label className="font-semibold">تحلیل آزاد قبل از چک‌لیست</Label>
+            <p className="text-xs text-muted-foreground mt-1 mb-2">
+              برداشت اولیه، سناریوی بازار و نواحی مهم را قبل از پاسخ‌دادن به مراحل ثبت کنید.
+            </p>
+            <Textarea
+              value={freeNotes}
+              onChange={e => setFreeNotes(e.target.value)}
+              onBlur={() => void analysisService.updateSession(id!, { notes: freeNotes || null })}
+              placeholder="سناریوی بازار و فرضیه اولیه خود را بنویسید…"
+              className="min-h-[100px] bg-background"
+            />
+          </CardContent>
+        </Card>
         {currentPhase.description && (
           <p className="text-muted-foreground mb-6 text-sm leading-relaxed">{currentPhase.description}</p>
         )}
@@ -553,6 +605,19 @@ export default function SessionRunner() {
                         {answered && <Check className="w-4 h-4 text-emerald-500 shrink-0" />}
                       </Label>
                       {step.hint && <p className="text-sm text-muted-foreground mt-1">{step.hint}</p>}
+                      {rules[step.id]?.length > 0 && (
+                        <div className="mt-2 space-y-1.5">
+                          {rules[step.id].map(rule => (
+                            <div key={rule.id} className="rounded-md border border-dashed border-primary/25 bg-background/50 px-3 py-2 text-xs">
+                              <span className="font-medium">{rule.title}</span>
+                              {rule.type === 'conditional' && (rule.condition || rule.action) && (
+                                <span className="text-muted-foreground"> — اگر {rule.condition || '…'}، آنگاه {rule.action || '…'}</span>
+                              )}
+                              {rule.description && <p className="mt-1 text-muted-foreground">{rule.description}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -675,23 +740,37 @@ export default function SessionRunner() {
                     {/* IMAGE / SCREENSHOT — Prompt 15 §14 */}
                     {step.type === 'image' && (
                       <div className="space-y-3">
-                        {res ? (
+                        {imageValues(res).length > 0 ? (
                           <>
-                            <div className="relative inline-block">
-                              <img
-                                src={res}
-                                alt="اسکرین‌شات"
-                                className="max-h-48 rounded-lg border object-contain"
-                              />
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="absolute top-1 right-1 h-7 w-7 bg-background/80 hover:bg-background"
-                                onClick={() => handleUpdateResult(step.id, null)}
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </Button>
+                            <div className="flex flex-wrap gap-3">
+                              {imageValues(res).map((image, imageIndex) => (
+                                <div key={`${step.id}-image-${imageIndex}`} className="relative inline-block">
+                                  <StoredImage
+                                    source={image}
+                                    alt={`اسکرین‌شات ${imageIndex + 1}`}
+                                    enableViewer
+                                    showDownload
+                                    filename={`${step.name || 'session-screenshot'}-${imageIndex + 1}`}
+                                    className="max-h-48 rounded-lg border object-contain"
+                                  />
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="absolute top-1 right-1 h-7 w-7 bg-background/80 hover:bg-background"
+                                    onClick={() => {
+                                      const remaining = imageValues(res).filter((_, index) => index !== imageIndex);
+                                      handleUpdateResult(step.id, remaining.length ? remaining : null);
+                                    }}
+                                    aria-label="حذف تصویر"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </Button>
+                                </div>
+                              ))}
                             </div>
+                            <Button variant="outline" size="sm" className="gap-2 border-dashed" onClick={() => handleImagePick(step.id)}>
+                              <Camera className="w-4 h-4" /> افزودن تصویر
+                            </Button>
                             {/* Visual similarity — compare with historical setups */}
                             {(() => {
                               const contextText = [

@@ -21,6 +21,7 @@ import {
   KnowledgeNote,
 } from '../db/database';
 import { isWin, isLoss, isClosed } from '../lib/tradeHelpers';
+import { getTradingDateParts } from '../lib/tradingTime';
 import { extractFeaturesFromText } from './visualAnalysisService';
 
 // ── Re-export types for use in UI ─────────────────────────────────
@@ -266,7 +267,7 @@ function computeSessionSimilarity(session: MarketContextSession, trade: Trade): 
   // 3. Session match (10 pts)
   try {
     const ptr = parseJSON<PostTradeReviewData>(trade.postTradeReview, {} as PostTradeReviewData);
-    const tradeSessionHour = new Date(trade.openedAt).getHours();
+    const tradeSessionHour = getTradingDateParts(trade.openedAt).hour;
     const tradeSession = getSessionFromHour(tradeSessionHour);
     if (tradeSession === session.session && session.session !== 'custom') {
       score += 10;
@@ -274,7 +275,7 @@ function computeSessionSimilarity(session: MarketContextSession, trade: Trade): 
     }
 
     // 4. Day of week match (8 pts)
-    const tradeDow = new Date(trade.openedAt).getDay();
+    const tradeDow = getTradingDateParts(trade.openedAt).dayOfWeek;
     if (tradeDow === session.dayOfWeek) {
       score += 8;
       reasons.push(`روز هفته یکسان (${DOW_LABELS[session.dayOfWeek]})`);
@@ -615,7 +616,7 @@ export async function analyzeMarketContext(session: MarketContextSession): Promi
       result: t.result,
       rMultiple: t.rMultiple,
       date: new Date(t.openedAt).toLocaleDateString('fa-IR'),
-      session: SESSION_LABELS[getSessionFromHour(new Date(t.openedAt).getHours())] ?? null,
+       session: SESSION_LABELS[getSessionFromHour(getTradingDateParts(t.openedAt).hour)] ?? null,
       setupType: null,
       score,
       matchReasons: reasons,
@@ -639,19 +640,19 @@ export async function analyzeMarketContext(session: MarketContextSession): Promi
 
   // Session-filtered
   const sessionTrades = allTrades.filter(t => {
-    const hour = new Date(t.openedAt).getHours();
+    const hour = getTradingDateParts(t.openedAt).hour;
     return getSessionFromHour(hour) === session.session;
   });
   const sessionStats = computeStats(sessionTrades, `در سشن ${SESSION_LABELS[session.session]} `);
 
   // Day-of-week filtered
-  const dowTrades = allTrades.filter(t => new Date(t.openedAt).getDay() === session.dayOfWeek);
+  const dowTrades = allTrades.filter(t => getTradingDateParts(t.openedAt).dayOfWeek === session.dayOfWeek);
   const dowStats = dowStats2(dowTrades, session.dayOfWeek);
 
   // Time-of-day filtered (±2 hours)
   const hour = parseInt(session.time.split(':')[0] ?? '12');
   const todTrades = allTrades.filter(t => {
-    const h = new Date(t.openedAt).getHours();
+    const h = getTradingDateParts(t.openedAt).hour;
     return Math.abs(h - hour) <= 2;
   });
   const timeOfDayStats = computeStats(todTrades, 'در بازه زمانی مشابه ');
@@ -659,7 +660,7 @@ export async function analyzeMarketContext(session: MarketContextSession): Promi
   // Multi-dimensional: symbol + session + setup
   const multiTrades = allTrades.filter(t => {
     const symbolOk = t.symbol.toUpperCase() === session.symbol;
-    const sessionOk = getSessionFromHour(new Date(t.openedAt).getHours()) === session.session;
+    const sessionOk = getSessionFromHour(getTradingDateParts(t.openedAt).hour) === session.session;
     return symbolOk && sessionOk;
   });
   const multiDimStats = multiTrades.length >= 2 ? computeStats(multiTrades, `برای ${session.symbol} در سشن ${SESSION_LABELS[session.session]} `) : null;

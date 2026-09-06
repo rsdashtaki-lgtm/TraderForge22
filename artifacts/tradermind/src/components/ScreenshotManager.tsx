@@ -13,9 +13,12 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Trade } from '../db/database';
 import {
   TradeScreenshot,
+  ScreenshotType,
   ScreenshotTimeframe,
   LifecyclePosition,
   VisualFeature,
@@ -39,6 +42,7 @@ import VisualFeatureEditor from './VisualFeatureEditor';
 import VisualComparisonView from './VisualComparisonView';
 import VisualSimilarityPanel from './VisualSimilarityPanel';
 import MTFSequenceView from './MTFSequenceView';
+import StoredImage from './StoredImage';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -48,7 +52,7 @@ import { Badge } from './ui/badge';
 import {
   Upload, X, Eye, Edit2, Trash2, Maximize2, Layers, Search,
   GitCompare, LayoutGrid, Image as ImageIcon, AlertTriangle,
-  CheckCircle2, ChevronDown, ChevronUp, ZoomIn,
+  CheckCircle2, ChevronDown, ChevronUp, ZoomIn, Camera as CameraIcon, MonitorDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
@@ -78,6 +82,21 @@ interface Props {
   compactMode?: boolean; // for TradeDetail — no editing, just viewing
 }
 
+interface PendingCapture {
+  file: File;
+  dataUrl: string;
+  label: string;
+}
+
+function fileFromDataUrl(dataUrl: string, filename: string): File {
+  const [header, payload] = dataUrl.split(',');
+  const mime = header.match(/data:([^;]+)/)?.[1] ?? 'image/jpeg';
+  const binary = atob(payload);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], filename, { type: mime });
+}
+
 export default function ScreenshotManager({
   trade,
   allTrades = [],
@@ -89,7 +108,10 @@ export default function ScreenshotManager({
   const [showMTF, setShowMTF] = useState(false);
   const [showLifecycle, setShowLifecycle] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [pendingCapture, setPendingCapture] = useState<PendingCapture | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isElectron = window.electronAPI?.isElectron === true || window.location.protocol === 'file:';
+  const isAndroid = Capacitor.getPlatform() === 'android';
 
   // Parse screenshots from trade JSON
   const screenshots: TradeScreenshot[] = (() => {
@@ -197,6 +219,74 @@ export default function ScreenshotManager({
     e.target.value = '';
   };
 
+  const handleNativeCapture = useCallback(async () => {
+    if (isProcessing || pendingCapture) return;
+
+    try {
+      if (isElectron) {
+        if (!window.electronAPI?.captureScreen) {
+          toast.error('قابلیت گرفتن اسکرین‌شات در این نسخه در دسترس نیست.');
+          return;
+        }
+        const capture = await window.electronAPI.captureScreen();
+        if (!capture?.dataUrl) {
+          toast.error('گرفتن تصویر لغو شد یا صفحه‌ای برای ثبت پیدا نشد.');
+          return;
+        }
+        setPendingCapture({
+          file: fileFromDataUrl(capture.dataUrl, `screen-${Date.now()}.png`),
+          dataUrl: capture.dataUrl,
+          label: `اسکرین‌شات صفحه (${capture.sourceName})`,
+        });
+        return;
+      }
+
+      if (isAndroid) {
+        const permissions = await Camera.checkPermissions();
+        if (permissions.camera !== 'granted') {
+          const requested = await Camera.requestPermissions({ permissions: ['camera'] });
+          if (requested.camera !== 'granted') {
+            toast.error('دسترسی دوربین داده نشده است.');
+            return;
+          }
+        }
+        const photo = await Camera.getPhoto({
+          source: CameraSource.Camera,
+          resultType: CameraResultType.DataUrl,
+          quality: 90,
+          width: 2400,
+          correctOrientation: true,
+          allowEditing: false,
+        });
+        if (!photo.dataUrl) {
+          toast.error('گرفتن تصویر لغو شد.');
+          return;
+        }
+        setPendingCapture({
+          file: fileFromDataUrl(photo.dataUrl, `camera-${Date.now()}.jpg`),
+          dataUrl: photo.dataUrl,
+          label: 'عکس دوربین',
+        });
+      }
+    } catch (error) {
+      const message = String((error as { message?: string })?.message ?? error).toLowerCase();
+      if (message.includes('permission') || message.includes('denied') || message.includes('not authorized')) {
+        toast.error('دسترسی دوربین داده نشده است.');
+      } else if (message.includes('cancel') || message.includes('dismiss')) {
+        toast.error('گرفتن تصویر لغو شد.');
+      } else {
+        console.error('[ScreenshotCapture] native capture failed', error);
+        toast.error(isElectron ? 'گرفتن اسکرین‌شات ناموفق بود.' : 'گرفتن عکس ناموفق بود.');
+      }
+    }
+  }, [isAndroid, isElectron, isProcessing, pendingCapture]);
+
+  const confirmNativeCapture = useCallback(async () => {
+    if (!pendingCapture || isProcessing) return;
+    await handleUpload([pendingCapture.file]);
+    setPendingCapture(null);
+  }, [handleUpload, isProcessing, pendingCapture]);
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files);
@@ -284,6 +374,18 @@ export default function ScreenshotManager({
             <Upload className="w-4 h-4" />
             {isProcessing ? 'در حال پردازش...' : 'آپلود تصویر'}
           </Button>
+           {(isElectron || isAndroid) && (
+             <Button
+               variant="default"
+               size="sm"
+               onClick={handleNativeCapture}
+               disabled={isProcessing || Boolean(pendingCapture)}
+               className="gap-2"
+             >
+               {isElectron ? <MonitorDown className="w-4 h-4" /> : <CameraIcon className="w-4 h-4" />}
+               {isElectron ? 'گرفتن اسکرین‌شات' : 'گرفتن عکس با دوربین'}
+             </Button>
+           )}
           <input
             ref={fileInputRef}
             type="file"
@@ -356,7 +458,7 @@ export default function ScreenshotManager({
                     ) : (
                       group.map(ss => (
                         <div key={ss.id} className="aspect-video rounded overflow-hidden">
-                          <img src={ss.dataUrl} alt={ss.label} className="w-full h-full object-cover" />
+                          <StoredImage source={ss.dataUrl} alt={ss.label} className="w-full h-full object-cover" />
                         </div>
                       ))
                     )}
@@ -405,8 +507,8 @@ export default function ScreenshotManager({
           >
             {/* Thumbnail */}
             <div className="aspect-video relative overflow-hidden bg-black/20">
-              <img
-                src={ss.dataUrl}
+              <StoredImage
+                source={ss.dataUrl}
                 alt={ss.label}
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform"
               />
@@ -491,6 +593,34 @@ export default function ScreenshotManager({
         )}
       </div>
 
+      {pendingCapture && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">{pendingCapture.label}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="rounded-lg overflow-hidden border border-white/10 bg-black/30">
+              <StoredImage
+                source={pendingCapture.dataUrl}
+                alt={pendingCapture.label}
+                className="max-h-[45vh] w-full object-contain"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={confirmNativeCapture} disabled={isProcessing}>
+                <CheckCircle2 className="w-4 h-4 ml-1" /> تأیید و ذخیره
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => void handleNativeCapture()} disabled={isProcessing}>
+                <CameraIcon className="w-4 h-4 ml-1" /> گرفتن دوباره
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setPendingCapture(null)} disabled={isProcessing}>
+                لغو
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Active screenshot panel */}
       {activeView && activeSS && (
         <Card className="border-primary/20 bg-primary/3">
@@ -546,6 +676,20 @@ export default function ScreenshotManager({
                     </SelectContent>
                   </Select>
 
+                  <Select
+                    value={activeSS.type}
+                    onValueChange={v => updateScreenshot(activeSS.id, { type: v as ScreenshotType })}
+                  >
+                    <SelectTrigger className="h-7 text-xs w-28">
+                      <SelectValue placeholder="نوع تصویر" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(TYPE_LABELS).map(([val, label]) => (
+                        <SelectItem key={val} value={val} className="text-xs">{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
                   <Input
                     value={activeSS.label}
                     onChange={e => updateScreenshot(activeSS.id, { label: e.target.value })}
@@ -575,9 +719,12 @@ export default function ScreenshotManager({
             {activeView.tab === 'view' && (
               <div className="space-y-3">
                 <div className="rounded-lg overflow-hidden border border-white/10">
-                  <img
-                    src={activeSS.dataUrl}
+                  <StoredImage
+                    source={activeSS.dataUrl}
                     alt={activeSS.label}
+                    enableViewer
+                    showDownload
+                    filename={activeSS.label || 'trade-screenshot'}
                     className="w-full h-auto max-h-[60vh] object-contain bg-black/20"
                   />
                 </div>

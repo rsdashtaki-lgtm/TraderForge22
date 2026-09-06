@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Switch as UISwitch } from "../components/ui/switch";
 import { Label } from "../components/ui/label";
 import { Badge } from "../components/ui/badge";
+import { useNavigationGuard } from "../navigation/NavigationGuard";
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent,
 } from "@dnd-kit/core";
@@ -57,6 +58,14 @@ function SortableStepCard({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: step.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
   const [showRules, setShowRules] = useState(false);
+  const parseOptions = () => {
+    try {
+      const parsed = JSON.parse(step.options || '[]');
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  };
 
   const STEP_TYPE_LABELS: Record<string, string> = {
     checkbox: 'Checkbox (Task)',
@@ -120,17 +129,46 @@ function SortableStepCard({
           </div>
 
           {(step.type === 'select' || step.type === 'multi-select') && (
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Options (comma-separated)</Label>
-              <Input
-                value={JSON.parse(step.options || '[]').join(', ')}
-                onChange={e => {
-                  const opts = e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean);
-                  onUpdate(step.id, { options: JSON.stringify(opts) });
-                }}
-                placeholder="Option 1, Option 2, Option 3"
-                className="h-8 text-sm"
-              />
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Options (هر گزینه در یک کادر)</Label>
+              <div className="space-y-2">
+                {parseOptions().map((option, index) => (
+                  <div key={`${step.id}-option-${index}`} className="flex items-center gap-2">
+                    <Input
+                      value={option}
+                      onChange={e => {
+                        const options = parseOptions();
+                        options[index] = e.target.value;
+                        onUpdate(step.id, { options: JSON.stringify(options) });
+                      }}
+                      placeholder={`Option ${index + 1}`}
+                      className="h-8 text-sm"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-danger"
+                      onClick={() => {
+                        const options = parseOptions().filter((_, i) => i !== index);
+                        onUpdate(step.id, { options: JSON.stringify(options) });
+                      }}
+                      aria-label="Remove option"
+                    >
+                      <Trash className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-dashed"
+                  onClick={() => onUpdate(step.id, { options: JSON.stringify([...parseOptions(), '']) })}
+                >
+                  <Plus className="w-3 h-3 mr-1" /> Add option
+                </Button>
+              </div>
             </div>
           )}
 
@@ -158,22 +196,53 @@ function SortableStepCard({
             {showRules && (
               <div className="mt-2 pl-3 border-l-2 border-muted space-y-2">
                 {rules.map(rule => (
-                  <div key={rule.id} className="flex items-center gap-2">
-                    <Input
-                      value={rule.title}
-                      onChange={e => onUpdateRule(rule.id, { title: e.target.value })}
-                      placeholder="Rule title"
-                      className="h-7 text-sm flex-1"
+                  <div key={rule.id} className="rounded-lg border bg-background/50 p-3 space-y-2">
+                    <div className="flex items-start gap-2">
+                      <Input
+                        value={rule.title}
+                        onChange={e => onUpdateRule(rule.id, { title: e.target.value })}
+                        placeholder="Rule title"
+                        className="h-8 text-sm flex-1"
+                      />
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-danger shrink-0" onClick={() => onDeleteRule(rule.id)} aria-label="Delete rule">
+                        <Trash className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-end">
+                      <Select value={rule.type} onValueChange={(value: any) => onUpdateRule(rule.id, { type: value })}>
+                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="checkbox">Checklist rule</SelectItem>
+                          <SelectItem value="conditional">Conditional: اگر… آنگاه…</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <div className="flex items-center gap-2 h-8">
+                        <UISwitch checked={rule.required} onCheckedChange={c => onUpdateRule(rule.id, { required: c })} id={`rule-req-${rule.id}`} />
+                        <Label htmlFor={`rule-req-${rule.id}`} className="text-xs text-muted-foreground whitespace-nowrap">Required</Label>
+                      </div>
+                    </div>
+                    {rule.type === 'conditional' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <Input
+                          value={rule.condition || ''}
+                          onChange={e => onUpdateRule(rule.id, { condition: e.target.value })}
+                          placeholder="اگر این اتفاق افتاد…"
+                          className="h-8 text-sm"
+                        />
+                        <Input
+                          value={rule.action || ''}
+                          onChange={e => onUpdateRule(rule.id, { action: e.target.value })}
+                          placeholder="آنگاه این کار را انجام بده…"
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                    )}
+                    <Textarea
+                      value={rule.description || ''}
+                      onChange={e => onUpdateRule(rule.id, { description: e.target.value })}
+                      placeholder="توضیح یا معیار پذیرش این Rule…"
+                      className="min-h-16 text-sm resize-y"
                     />
-                    <UISwitch
-                      checked={rule.required}
-                      onCheckedChange={c => onUpdateRule(rule.id, { required: c })}
-                      id={`rule-req-${rule.id}`}
-                    />
-                    <Label htmlFor={`rule-req-${rule.id}`} className="text-xs text-muted-foreground whitespace-nowrap">Req</Label>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-danger shrink-0" onClick={() => onDeleteRule(rule.id)}>
-                      <Trash className="w-3 h-3" />
-                    </Button>
                   </div>
                 ))}
                 <Button variant="ghost" size="sm" className="h-6 text-xs text-muted-foreground" onClick={() => onAddRule(step.id)}>
@@ -197,6 +266,7 @@ export default function StrategyBuilder() {
   const [steps, setSteps] = useState<Step[]>([]);
   const [rules, setRules] = useState<Record<string, Rule[]>>({}); // stepId -> rules
   const [isEditingMeta, setIsEditingMeta] = useState(false);
+  const [metaDirty, setMetaDirty] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -209,6 +279,7 @@ export default function StrategyBuilder() {
     const s = await strategyService.getStrategyById(id!);
     if (!s) return;
     setStrategy(s);
+    setMetaDirty(false);
     const p = await strategyService.getPhasesByStrategyId(s.id);
     setPhases(p);
     if (p.length > 0 && !activePhaseId) setActivePhaseId(p[0].id);
@@ -247,6 +318,19 @@ export default function StrategyBuilder() {
     setPhases(prev => prev.map(p => p.id === phaseId ? { ...p, ...data } : p));
     await strategyService.updatePhase(phaseId, data);
   };
+
+  useNavigationGuard({
+    isDirty: Boolean(strategy && metaDirty),
+    onSave: async () => {
+      if (!strategy) return;
+      await strategyService.updateStrategy(strategy.id, {
+        name: strategy.name,
+        description: strategy.description,
+      });
+      setMetaDirty(false);
+    },
+    onDiscard: () => setMetaDirty(false),
+  });
 
   const handleDeletePhase = async (phaseId: string) => {
     if (!confirm('Delete this phase and all its steps and rules?')) return;
@@ -374,15 +458,22 @@ export default function StrategyBuilder() {
             <div className="flex flex-col gap-1.5">
               <Input
                 value={strategy.name}
-                onChange={e => setStrategy({ ...strategy, name: e.target.value })}
-                onBlur={() => { strategyService.updateStrategy(strategy.id, { name: strategy.name, description: strategy.description }); setIsEditingMeta(false); }}
+                onChange={e => { setStrategy({ ...strategy, name: e.target.value }); setMetaDirty(true); }}
+                onBlur={() => {
+                  void strategyService.updateStrategy(strategy.id, { name: strategy.name, description: strategy.description });
+                  setMetaDirty(false);
+                  setIsEditingMeta(false);
+                }}
                 className="font-bold text-lg w-72"
                 autoFocus
               />
               <Input
                 value={strategy.description}
-                onChange={e => setStrategy({ ...strategy, description: e.target.value })}
-                onBlur={() => strategyService.updateStrategy(strategy.id, { description: strategy.description })}
+                onChange={e => { setStrategy({ ...strategy, description: e.target.value }); setMetaDirty(true); }}
+                onBlur={() => {
+                  void strategyService.updateStrategy(strategy.id, { description: strategy.description });
+                  setMetaDirty(false);
+                }}
                 className="text-sm w-72"
                 placeholder="Strategy description"
               />

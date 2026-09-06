@@ -29,6 +29,7 @@ import { exportTradesAsCSV, parseMT4HTMLReport } from "../services/importService
 import { db, Trade } from "../db/database";
 import { TradeScreenshot, LifecyclePosition } from "../types/screenshot";
 import { tradeService } from "../services/tradeService";
+import StoredImage from "../components/StoredImage";
 
 // ─── Wizard steps ──────────────────────────────────────────────────────────────
 
@@ -389,7 +390,14 @@ export default function DataImport() {
                 <div className="grid grid-cols-3 gap-2">
                   {pendingScreenshots.map((s, i) => (
                     <div key={i} className="relative group">
-                      <img src={s.dataUrl} alt={s.label} className="w-full aspect-video object-cover rounded-lg border border-border" />
+                      <StoredImage
+                        source={s.dataUrl}
+                        alt={s.label}
+                        enableViewer
+                        showDownload
+                        filename={s.label || 'imported-screenshot'}
+                        className="w-full aspect-video object-cover rounded-lg border border-border"
+                      />
                       <button onClick={() => setPendingScreenshots(prev => prev.filter((_, j) => j !== i))}
                         className="absolute top-1 left-1 w-5 h-5 rounded-full bg-destructive/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <Trash2 className="w-3 h-3 text-white" />
@@ -515,7 +523,14 @@ export default function DataImport() {
                 <div className="grid grid-cols-3 gap-2">
                   {pendingScreenshots.map((s, i) => (
                     <div key={i} className="relative group">
-                      <img src={s.dataUrl} alt={s.label} className="w-full aspect-video object-cover rounded-lg border border-border" />
+                      <StoredImage
+                        source={s.dataUrl}
+                        alt={s.label}
+                        enableViewer
+                        showDownload
+                        filename={s.label || 'imported-screenshot'}
+                        className="w-full aspect-video object-cover rounded-lg border border-border"
+                      />
                       <div className="text-[9px] truncate text-muted-foreground mt-0.5">{s.label}</div>
                     </div>
                   ))}

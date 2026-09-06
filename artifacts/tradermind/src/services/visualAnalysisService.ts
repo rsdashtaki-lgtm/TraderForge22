@@ -308,6 +308,7 @@ export function findSimilarScreenshots(
         matchedFeatures: matchedValues.map(v => featureLabel(v)),
         label: ss.label ?? 'اسکرین‌شات',
         dataUrl: ss.dataUrl,
+        imageBlob: null,
         createdAt: ss.createdAt ?? 0,
       });
     }

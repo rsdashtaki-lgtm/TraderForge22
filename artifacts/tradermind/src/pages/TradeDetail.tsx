@@ -20,6 +20,7 @@ import { Progress } from "../components/ui/progress";
 import { format } from "date-fns";
 import ScreenshotManager from "../components/ScreenshotManager";
 import { TradeScreenshot } from "../types/screenshot";
+import { getNetPnl } from "../lib/tradeHelpers";
 
 // نگاشت ID احساس (انگلیسی) به برچسب فارسی برای نمایش
 const EMOTION_LABELS_FA: Record<string, string> = {
@@ -71,9 +72,21 @@ const SESSION_STATUS_FA: Record<string, string> = {
   completed: 'تکمیل شده', 'in-progress': 'در حال انجام', abandoned: 'رها شده',
 };
 
+function getReturnToFromLocation(location: string): string {
+  const locationQuery = location.includes('?')
+    ? location.slice(location.indexOf('?') + 1)
+    : '';
+  const hash = typeof window !== 'undefined' ? window.location.hash.replace(/^#/, '') : '';
+  const hashQuery = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '';
+  const browserQuery = typeof window !== 'undefined'
+    ? window.location.search.replace(/^\?/, '')
+    : '';
+  return new URLSearchParams(locationQuery || hashQuery || browserQuery).get('returnTo') || '/journal/trades';
+}
+
 export default function TradeDetail() {
   const { id } = useParams<{ id: string }>();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const [trade, setTrade] = useState<Trade | null>(null);
   const [session, setSession] = useState<AnalysisSession | null>(null);
   const [strategy, setStrategy] = useState<Strategy | null>(null);
@@ -88,6 +101,9 @@ export default function TradeDetail() {
   const [versions, setVersions] = useState<TradeVersion[]>([]);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versionsLoaded, setVersionsLoaded] = useState(false);
+
+  const returnTo = getReturnToFromLocation(location);
+  const editPath = `/journal/trades/new?editId=${encodeURIComponent(trade?.id || id || '')}&returnTo=${encodeURIComponent(returnTo)}`;
 
   useEffect(() => { loadTrade(); }, [id]);
   useEffect(() => { db.trades.toArray().then(setAllTrades); }, []);
@@ -108,7 +124,7 @@ export default function TradeDetail() {
   const loadTrade = async () => {
     if (!id) return;
     const tr = await tradeService.getTradeById(id);
-    if (!tr) { setLocation('/journal/trades'); return; }
+    if (!tr) { setLocation(returnTo); return; }
     setTrade(tr);
 
     if (tr.sessionId) {
@@ -131,7 +147,7 @@ export default function TradeDetail() {
   const handleDelete = async () => {
     if (!id) return;
     await tradeService.deleteTrade(id);
-    setLocation('/journal/trades');
+    setLocation(returnTo);
   };
 
   const handleComputeAdherence = async () => {
@@ -202,7 +218,7 @@ export default function TradeDetail() {
             <Badge key={f.key} variant="outline" className="border-amber-500/40 text-amber-500 text-[10px] py-0">{f.label}</Badge>
           ))}
           <Button size="sm" variant="ghost" className="mr-auto h-6 text-xs"
-            onClick={() => setLocation(`/journal/trades/new?editId=${trade.id}`)}>
+            onClick={() => setLocation(editPath)}>
             تکمیل
           </Button>
         </div>
@@ -211,7 +227,7 @@ export default function TradeDetail() {
       {/* هدر */}
       <div className="flex items-start sm:items-center justify-between border-b pb-4 gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => setLocation('/journal/trades')} className="shrink-0">
+          <Button variant="ghost" size="icon" onClick={() => setLocation(returnTo)} className="shrink-0">
             <ArrowRight className="w-5 h-5" />
           </Button>
           <div className="flex items-center gap-2 flex-wrap">
@@ -241,7 +257,7 @@ export default function TradeDetail() {
             </Button>
           )}
           <Button variant="outline" size="sm" className="gap-2"
-            onClick={() => setLocation(`/journal/trades/new?editId=${trade.id}`)}>
+            onClick={() => setLocation(editPath)}>
             <Pencil className="w-4 h-4" /> ویرایش
           </Button>
           <Dialog open={isDeleting} onOpenChange={setIsDeleting}>
@@ -275,9 +291,9 @@ export default function TradeDetail() {
             value: trade.exitPrice !== null ? trade.exitPrice : <span className="text-primary text-lg">باز</span>,
           },
           {
-            label: 'سود / زیان',
-            value: trade.profitLoss !== null ? `$${trade.profitLoss.toFixed(2)}` : '-',
-            cls: trade.profitLoss ? (trade.profitLoss > 0 ? 'text-emerald-500' : 'text-rose-500') : '',
+            label: 'سود / زیان خالص',
+            value: getNetPnl(trade) !== null ? `$${getNetPnl(trade)!.toFixed(2)}` : '-',
+            cls: getNetPnl(trade) ? (getNetPnl(trade)! > 0 ? 'text-emerald-500' : 'text-rose-500') : '',
           },
           { label: 'R Multiple', value: trade.rMultiple !== null ? `${trade.rMultiple}R` : '-' },
         ].map((c, i) => (
@@ -311,7 +327,9 @@ export default function TradeDetail() {
                   { label: 'حجم پوزیشن', value: trade.positionSize || '-' },
                   { label: 'ریسک (٪)', value: trade.riskPercentage !== null ? `${trade.riskPercentage}٪` : '-' },
                   { label: 'مقدار ریسک', value: trade.riskAmount !== null ? `$${trade.riskAmount}` : '-' },
-                  { label: 'کمیسیون', value: trade.fees !== null ? `$${trade.fees}` : '-' },
+                  { label: 'سایر هزینه‌ها', value: trade.fees != null ? `$${trade.fees}` : '-' },
+                  { label: 'کمیسیون', value: trade.commission != null ? `$${trade.commission}` : '-' },
+                  { label: 'اسپرد', value: trade.spread != null ? `$${trade.spread}` : '-' },
                 ].map((f, i) => (
                   <div key={i}>
                     <div className="text-muted-foreground">{f.label}</div>

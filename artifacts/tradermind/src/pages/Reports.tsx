@@ -21,6 +21,8 @@ import {
   TimeRangeKey, AnalyticsData,
   computeAnalytics, getDateRange, filterTradesByRange,
 } from "../services/analyticsService";
+import { useAppStore } from "../store/useAppStore";
+import { getTradingDateRange } from "../lib/tradingTime";
 
 // ================================================================
 // رنگ‌های ثابت (سازگار با dark/light mode)
@@ -158,6 +160,8 @@ function ChartTooltip({ active, payload, label, prefix = "" }: {
 // ================================================================
 
 export default function Reports() {
+  const tradingTimeMode = useAppStore(s => s.tradingTimeMode);
+  const brokerUtcOffsetMinutes = useAppStore(s => s.brokerUtcOffsetMinutes);
   const [allTrades, setAllTrades]   = useState<Trade[]>([]);
   const [journals, setJournals]     = useState<DailyJournal[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -184,14 +188,14 @@ export default function Reports() {
   const trades = useMemo(() => {
     let from: number, to: number;
     if (timeRange === "custom") {
-      from = customApplied.from ? new Date(customApplied.from + "T00:00:00").getTime() : 0;
-      to   = customApplied.to   ? new Date(customApplied.to   + "T23:59:59").getTime() : Date.now();
+      from = customApplied.from ? getTradingDateRange(customApplied.from).from : 0;
+      to   = customApplied.to   ? getTradingDateRange(customApplied.to).to : Date.now();
     } else {
       const r = getDateRange(timeRange);
       from = r.from; to = r.to;
     }
     return filterTradesByRange(allTrades, from, to);
-  }, [allTrades, timeRange, customApplied]);
+  }, [allTrades, timeRange, customApplied, tradingTimeMode, brokerUtcOffsetMinutes]);
 
   const analytics: AnalyticsData = useMemo(
     () => computeAnalytics(trades, journals, strategies),

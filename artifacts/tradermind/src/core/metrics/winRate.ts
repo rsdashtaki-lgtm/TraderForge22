@@ -5,6 +5,7 @@
 
 import { Trade } from '../../db/database';
 import { isClosed, isWin, isLoss } from '../../lib/tradeHelpers';
+import { getTradingDateParts } from '../../lib/tradingTime';
 
 export interface WinRateResult {
   total: number;
@@ -54,7 +55,7 @@ export function computeWinRateByDayOfWeek(trades: Trade[]): Array<{
   const closed = trades.filter(isClosed);
 
   return DAYS.map((dayName, day) => {
-    const dayTrades = closed.filter(t => new Date(t.openedAt).getDay() === day);
+    const dayTrades = closed.filter(t => getTradingDateParts(t.openedAt).dayOfWeek === day);
     const wins = dayTrades.filter(isWin);
     return {
       day,

@@ -127,12 +127,12 @@ export default function Accounts() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <Wallet className="w-5 h-5 shrink-0" style={{ color: acc.color }} />
-                    <div className="min-w-0">
-                      <div className="font-semibold truncate flex items-center gap-1.5">
+                    <div className="min-w-0 flex-1" dir="rtl">
+                      <div className="font-semibold whitespace-normal break-words leading-6 flex items-center gap-1.5">
                         {acc.name}
                         {acc.isDefault && <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />}
                       </div>
-                      {acc.broker && <div className="text-xs text-muted-foreground truncate">{acc.broker}</div>}
+                      {acc.broker && <div className="text-xs text-muted-foreground whitespace-normal break-words leading-5">{acc.broker}</div>}
                     </div>
                   </div>
                   <div className="flex gap-1 shrink-0">

@@ -21,6 +21,7 @@ import {
   AlertCircle, Target, Shield, Search, MessageSquare, DollarSign, Filter, X,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { useAppStore } from '../store/useAppStore';
 import {
   computeEdgeAnalytics, computeExtendedAnalytics, filterCalendarMonths,
   EdgeAnalyticsResult, ExtendedAnalyticsResult, SliceMetrics, ConfidenceLevel,
@@ -629,7 +630,7 @@ function SymbolsTab({ result, ext }: { result: EdgeAnalyticsResult; ext: Extende
       {/* Market Regime */}
       {ext.regimeSlices.length > 0 && (
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Activity className="w-4 h-4 text-primary"/>رژیم بازار</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Activity className="w-4 h-4 text-primary"/>Market Regime</CardTitle></CardHeader>
           <CardContent className="space-y-2">
             {ext.regimeSlices.map((r,i)=>(
               <div key={i} className="flex items-center gap-2 bg-muted/20 rounded-lg px-3 py-2 text-xs">
@@ -640,7 +641,7 @@ function SymbolsTab({ result, ext }: { result: EdgeAnalyticsResult; ext: Extende
                 <ConfidenceBadge level={r.metrics.confidence} />
               </div>
             ))}
-            <p className="text-[10px] text-muted-foreground">رژیم بازار از تگ‌های معامله استخراج می‌شود (trending، ranging، volatile، ...).</p>
+            <p className="text-[10px] text-muted-foreground">Market Regime از تگ‌های معامله استخراج می‌شود (trending، ranging، volatile، ...).</p>
           </CardContent>
         </Card>
       )}
@@ -1039,8 +1040,12 @@ export default function EdgeAnalytics() {
   const [trades, setTrades]         = useState<Trade[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading]       = useState(true);
-  const [tzOffset, setTzOffset]     = useState('3.5');
   const [activeTab, setActiveTab]   = useState('edge');
+  const tradingTimeMode = useAppStore(s => s.tradingTimeMode);
+  const brokerUtcOffsetMinutes = useAppStore(s => s.brokerUtcOffsetMinutes);
+  const tzOffset = tradingTimeMode === 'broker'
+    ? brokerUtcOffsetMinutes / 60
+    : -new Date().getTimezoneOffset() / 60;
 
   useEffect(() => {
     Promise.all([db.trades.toArray(), db.strategies.toArray()])
@@ -1050,7 +1055,7 @@ export default function EdgeAnalytics() {
   const { result, ext, classified } = useMemo(() => {
     if (!trades.length) return { result: null, ext: null, classified: [] };
     const stratMap = strategies.map(s => ({ id: s.id, name: s.name }));
-    const res = computeEdgeAnalytics(trades, stratMap, parseFloat(tzOffset));
+    const res = computeEdgeAnalytics(trades, stratMap, tzOffset);
     const ex  = computeExtendedAnalytics(res.classified);
     return { result: res, ext: ex, classified: res.classified };
   }, [trades, strategies, tzOffset]);
@@ -1095,10 +1100,9 @@ export default function EdgeAnalytics() {
               {result?.classified.length ?? 0} معامله · {result?.overallMetrics.winRate.toFixed(0) ?? 0}٪ برد · avgR: {result?.overallMetrics.avgR?.toFixed(2) ?? '—'}
             </div>
           </div>
-          <Select value={tzOffset} onValueChange={setTzOffset}>
-            <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>{TZ_OPTIONS.map(tz=><SelectItem key={tz.value} value={tz.value} className="text-xs">{tz.label}</SelectItem>)}</SelectContent>
-          </Select>
+          <div className="rounded-md border px-2.5 py-1.5 text-[11px] text-muted-foreground whitespace-nowrap" dir="ltr">
+            {tradingTimeMode === 'broker' ? `Broker UTC${tzOffset >= 0 ? '+' : ''}${tzOffset}` : 'Device local time'}
+          </div>
         </div>
       </div>
 

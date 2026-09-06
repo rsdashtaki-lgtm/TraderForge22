@@ -1,18 +1,17 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ComponentProps } from "react";
 import { Link, useLocation } from "wouter";
 import { tradeService } from "../services/tradeService";
 import { analysisService } from "../services/analysisService";
 import { strategyService } from "../services/strategyService";
 import { accountService } from "../services/accountService";
 import { tradingBoxService } from "../services/tradingBoxService";
-import { db, Trade, Strategy, AnalysisSession, Account, TradingBox } from "../db/database";
+import { db, Trade, Strategy, AnalysisSession, Account, TradingBox, MTFScenario } from "../db/database";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Label } from "../components/ui/label";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { ArrowLeft, Save, Eye, Plus, X, Image as ImageIcon, Zap, BookOpen, ChevronDown, ChevronUp, CheckSquare, Square, CreditCard, Box } from "lucide-react";
 import { toast } from "sonner";
 import { Progress } from "../components/ui/progress";
@@ -20,8 +19,23 @@ import { format } from "date-fns";
 import PreTradeInsightPanel from "../components/PreTradeInsightPanel";
 import ScreenshotManager from "../components/ScreenshotManager";
 import { TradeScreenshot } from "../types/screenshot";
+import { getTradingDateTimeInput, parseTradingDateTimeInput } from "../lib/tradingTime";
+import { detectTradingSession } from "../lib/tradeClassification";
+import { useNavigationGuard, useGuardedNavigation } from "../navigation/NavigationGuard";
+import { useAppStore } from "../store/useAppStore";
+import { getNetPnl } from "../lib/tradeHelpers";
 
 const MARKETS = ['Forex', 'Crypto', 'Indices', 'Stocks', 'Commodities', 'Other'];
+const DEFAULT_MTF_TIMEFRAMES = ['4H', '15M', '5M', '1M'];
+const normalizeMtfTimeframes = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return DEFAULT_MTF_TIMEFRAMES;
+  const result = value
+    .filter(item => typeof item === 'string')
+    .map(item => item.trim().toUpperCase())
+    .filter(Boolean)
+    .filter((item, index, items) => items.indexOf(item) === index);
+  return result.length ? result.slice(0, 8) : DEFAULT_MTF_TIMEFRAMES;
+};
 
 // ── لیست نمادهای معاملاتی رایج ──────────────────────────────────────────────
 const TRADING_SYMBOLS: { label: string; value: string; market: string }[] = [
@@ -87,13 +101,25 @@ const TRADING_SYMBOLS: { label: string; value: string; market: string }[] = [
   { label: 'TRUMPUSDT — ترامپ', value: 'TRUMPUSDT', market: 'Crypto' },
 ];
 
-// لیست حجم پوزیشن (لات) از ۰.۰۱ شروع می‌شود
+const CUSTOM_SYMBOLS_KEY = 'tradermind-custom-symbols';
+
+function getCustomSymbols(): { label: string; value: string; market: string }[] {
+  try {
+    const values = JSON.parse(localStorage.getItem(CUSTOM_SYMBOLS_KEY) ?? '[]');
+    if (!Array.isArray(values)) return [];
+    return values.filter((item): item is { label: string; value: string; market: string } =>
+      item && typeof item.value === 'string' && typeof item.label === 'string'
+    );
+  } catch {
+    return [];
+  }
+}
+
+// لیست حجم پوزیشن (لات) با گام ۰.۰۱ تا یک لات، سپس مقادیر بزرگ‌تر
 const POSITION_SIZE_OPTIONS = [
-  0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09,
-  0.10, 0.12, 0.15, 0.18, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45,
-  0.50, 0.60, 0.70, 0.80, 0.90, 1.00, 1.25, 1.50, 1.75, 2.00,
-  2.50, 3.00, 4.00, 5.00, 7.50, 10.00, 15.00, 20.00, 25.00,
-  30.00, 50.00, 100.00,
+  ...Array.from({ length: 100 }, (_, index) => Number(((index + 1) / 100).toFixed(2))),
+  1.25, 1.50, 1.75, 2.00, 2.50, 3.00, 4.00, 5.00, 7.50, 10.00,
+  15.00, 20.00, 25.00, 30.00, 50.00, 100.00,
 ];
 
 // لیست درصد ریسک
@@ -101,6 +127,68 @@ const RISK_PERCENTAGE_OPTIONS = [
   0.25, 0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00,
   2.50, 3.00, 4.00, 5.00, 7.50, 10.00,
 ];
+
+function normalizeDecimalInput(value: string): string {
+  const normalized = value
+    .replace(/[۰-۹]/g, digit => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+    .replace(/[٠-٩]/g, digit => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
+    .replace(/[٫,]/g, '.')
+    .replace(/[^\d.-]/g, '');
+  const sign = normalized.startsWith('-') ? '-' : '';
+  const unsigned = normalized.replace(/-/g, '');
+  const [whole = '', ...fraction] = unsigned.split('.');
+  return `${sign}${whole}${fraction.length > 0 ? `.${fraction.join('')}` : ''}`;
+}
+
+function customDecimalValue(value: string): number | null {
+  if (!value || value === '.') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function decimalValue(value: string): number | null {
+  if (!value || value === '.' || value === '-') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function NumericInput({
+  value,
+  onValueChange,
+  ...props
+}: Omit<ComponentProps<typeof Input>, 'value' | 'onChange'> & {
+  value: number | null | undefined;
+  onValueChange: (value: number | null) => void;
+}) {
+  const [text, setText] = useState(value == null ? '' : String(value));
+  const lastSyncedValue = useRef<number | null>(value ?? null);
+
+  useEffect(() => {
+    const externalValue = value ?? null;
+    if (externalValue !== lastSyncedValue.current) {
+      setText(externalValue == null ? '' : String(externalValue));
+      lastSyncedValue.current = externalValue;
+    }
+  }, [value]);
+
+  return (
+    <Input
+      {...props}
+      type="text"
+      inputMode="decimal"
+      step="any"
+      value={text}
+      onChange={event => {
+        const nextText = normalizeDecimalInput(event.target.value);
+        const nextValue = decimalValue(nextText);
+        setText(nextText);
+        lastSyncedValue.current = nextValue;
+        onValueChange(nextValue);
+      }}
+      dir="ltr"
+    />
+  );
+}
 
 // حالت‌های احساسی به فارسی
 const EMOTIONS = [
@@ -120,15 +208,9 @@ const EMOTIONS = [
 
 // ── کامپوننت انتخاب نماد با جستجو ──────────────────────────────────────────
 function SymbolSelector({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-
-  const filtered = search.length > 0
-    ? TRADING_SYMBOLS.filter(s =>
-        s.value.includes(search.toUpperCase()) ||
-        s.label.toLowerCase().includes(search.toLowerCase())
-      ).slice(0, 30)
-    : TRADING_SYMBOLS.slice(0, 40);
+  const [customSymbols, setCustomSymbols] = useState(getCustomSymbols);
+  const [customInput, setCustomInput] = useState('');
+  const allSymbols = [...TRADING_SYMBOLS, ...customSymbols];
 
   const displayValue = value || '';
 
@@ -136,50 +218,85 @@ function SymbolSelector({ value, onChange }: { value: string; onChange: (v: stri
     <div className="space-y-1">
       <div className="relative">
         <Input
-          placeholder="جستجو یا وارد کردن نماد (مثلاً EURUSD، BTCUSDT، XAUUSD)"
-          value={search || displayValue}
-          onFocus={() => { setOpen(true); setSearch(''); }}
+          placeholder="وارد کردن نماد (مثلاً EURUSD، BTCUSDT، XAUUSD)"
+          value={displayValue}
           onChange={e => {
             const v = e.target.value.toUpperCase();
-            setSearch(v);
             onChange(v);
-            setOpen(true);
           }}
-          onBlur={() => setTimeout(() => setOpen(false), 200)}
           className="text-lg font-bold uppercase"
           autoComplete="off"
         />
-        {open && filtered.length > 0 && (
-          <div className="absolute z-50 top-full mt-1 w-full bg-popover border rounded-md shadow-lg overflow-y-auto max-h-56">
-            {filtered.map(sym => (
-              <button
-                key={sym.value}
-                type="button"
-                className="w-full text-left px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground flex justify-between items-center gap-2"
-                onMouseDown={() => {
-                  onChange(sym.value);
-                  setSearch('');
-                  setOpen(false);
-                }}
-              >
-                <span className="font-semibold">{sym.value}</span>
-                <span className="text-muted-foreground text-xs truncate">{sym.label.includes('—') ? sym.label.split('—')[1].trim() : sym.market}</span>
-              </button>
-            ))}
-          </div>
-        )}
       </div>
-      {displayValue && !search && (
+      {displayValue && (
         <p className="text-xs text-muted-foreground">
-          {TRADING_SYMBOLS.find(s => s.value === displayValue)?.market || 'نماد سفارشی'}
+          {allSymbols.find(s => s.value === displayValue)?.market || 'نماد سفارشی'}
           {' • '}
-          {TRADING_SYMBOLS.find(s => s.value === displayValue)?.label.includes('—')
-            ? TRADING_SYMBOLS.find(s => s.value === displayValue)?.label.split('—')[1].trim()
+          {allSymbols.find(s => s.value === displayValue)?.label.includes('—')
+            ? allSymbols.find(s => s.value === displayValue)?.label.split('—')[1].trim()
             : displayValue}
         </p>
       )}
+      {customSymbols.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          <span className="text-[11px] text-muted-foreground">نمادهای من:</span>
+          {customSymbols.map(sym => (
+            <span key={sym.value} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs">
+              <button type="button" onClick={() => onChange(sym.value)} className={displayValue === sym.value ? 'text-primary font-semibold' : 'text-muted-foreground hover:text-foreground'}>
+                {sym.value}
+              </button>
+              <button
+                type="button"
+                aria-label={`حذف نماد ${sym.value}`}
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => {
+                  const next = customSymbols.filter(item => item.value !== sym.value);
+                  setCustomSymbols(next);
+                  localStorage.setItem(CUSTOM_SYMBOLS_KEY, JSON.stringify(next));
+                  if (displayValue === sym.value) onChange('');
+                }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2 pt-1">
+        <Input
+          value={customInput}
+          onChange={e => setCustomInput(e.target.value.toUpperCase())}
+          placeholder="نماد سفارشی، مثلاً US100"
+          className="h-8 text-sm"
+          dir="ltr"
+          autoComplete="off"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 shrink-0"
+          disabled={!customInput.trim()}
+          onClick={() => {
+            const symbol = customInput.trim().toUpperCase();
+            if (!symbol) return;
+            const next = [...customSymbols.filter(s => s.value !== symbol), { value: symbol, label: 'نماد سفارشی', market: tradeMarket(symbol) }];
+            setCustomSymbols(next);
+            localStorage.setItem(CUSTOM_SYMBOLS_KEY, JSON.stringify(next));
+            onChange(symbol);
+            setCustomInput('');
+          }}
+        >
+          افزودن
+        </Button>
+      </div>
     </div>
   );
+}
+
+function tradeMarket(symbol: string): string {
+  if (symbol.includes('USD') || symbol.includes('EUR') || symbol.includes('GBP') || symbol.includes('JPY')) return 'Forex';
+  return 'Other';
 }
 
 export default function NewTrade() {
@@ -197,6 +314,7 @@ export default function NewTrade() {
   const searchParams = new URLSearchParams(_searchStr);
   const sessionId = searchParams.get('sessionId');
   const editId = searchParams.get('editId');
+  const returnTo = searchParams.get('returnTo');
   // idFromUrl فقط برای بازیابی پیش‌نویس پس از رفرش صفحه استفاده می‌شود
   // اگر new=true باشد یا editId وجود داشته باشد، از آن صرف‌نظر می‌شود
   const isNewTrade = searchParams.get('new') === 'true';
@@ -214,7 +332,14 @@ export default function NewTrade() {
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [tradingBoxes, setTradingBoxes] = useState<TradingBox[]>([]);
-  const [leaveDialog, setLeaveDialog] = useState<{ show: boolean; resolve?: (leave: boolean) => void }>({ show: false });
+  // ورودی متن جداست تا مقدارهای میانی مثل «۰.» هنگام تایپ با رندر مجدد پاک نشوند.
+  const [positionSizeInput, setPositionSizeInput] = useState('');
+  const [riskPercentageInput, setRiskPercentageInput] = useState('');
+  const [newMtfTimeframe, setNewMtfTimeframe] = useState('');
+  const [newScenarioDirection, setNewScenarioDirection] = useState<MTFScenario['direction']>('both');
+  const [newScenarioTimeframe, setNewScenarioTimeframe] = useState('');
+  const journalCustomTags = useAppStore(s => s.journalCustomTags);
+  const journalCustomEmotions = useAppStore(s => s.journalCustomEmotions);
 
   useEffect(() => {
     db.trades.toArray().then(setAllTrades);
@@ -249,6 +374,7 @@ export default function NewTrade() {
   const initialized = useRef(false);
   // Tracks the last set of URL params we initialized for — re-init when they change
   const lastInitKey = useRef<string>('__unset__');
+  const requestNavigation = useGuardedNavigation();
 
   useEffect(() => {
     // Build a key from the current URL params that identify which trade to open
@@ -274,14 +400,25 @@ export default function NewTrade() {
 
       let currentTrade: Trade | null = null;
 
-      if (tradeIdRef.current) {
-        const existing = await tradeService.getTradeById(tradeIdRef.current);
+      const requestedTradeId = tradeIdRef.current;
+
+      if (requestedTradeId) {
+        const existing = await tradeService.getTradeById(requestedTradeId);
         if (existing) {
           currentTrade = existing;
         }
       } 
       
       if (!currentTrade) {
+        // Never replace a missing edit/recovery target with a new blank trade.
+        // That used to create an empty record when an editId was stale or the
+        // IndexedDB read raced with navigation.
+        if (requestedTradeId) {
+          toast.error('معاملهٔ موردنظر پیدا نشد و معاملهٔ جدیدی ساخته نشد.');
+          setLocation('/journal/trades');
+          return;
+        }
+
         currentTrade = await tradeService.createTrade({
           sessionId: sessionId || null
         });
@@ -294,7 +431,28 @@ export default function NewTrade() {
         lastInitKey.current = `|${currentTrade.id}|${sessionId ?? ''}`;
       }
 
+      // Repair older drafts that were saved before market defaults existed.
+      // A known symbol always wins; otherwise keep a valid stored market.
+      const symbolMarket = TRADING_SYMBOLS.find(s => s.value === currentTrade!.symbol)?.market;
+      if (!currentTrade.market && (symbolMarket || currentTrade.symbol)) {
+        currentTrade = {
+          ...currentTrade,
+          market: symbolMarket ?? tradeMarket(currentTrade.symbol),
+        };
+        await tradeService.updateTrade(currentTrade.id, { market: currentTrade.market });
+      }
+
       setTrade(currentTrade);
+      setPositionSizeInput(
+        currentTrade.positionSize != null && !POSITION_SIZE_OPTIONS.includes(currentTrade.positionSize)
+          ? String(currentTrade.positionSize)
+          : ''
+      );
+      setRiskPercentageInput(
+        currentTrade.riskPercentage != null && !RISK_PERCENTAGE_OPTIONS.includes(currentTrade.riskPercentage)
+          ? String(currentTrade.riskPercentage)
+          : ''
+      );
       lastSavedRef.current = currentTrade;
 
       const targetSessionId = currentTrade.sessionId || sessionId;
@@ -322,54 +480,104 @@ export default function NewTrade() {
     });
   }, []);
 
-  const saveTrade = useCallback(async (dataToSave: Trade) => {
-    if (!dataToSave.id) return;
+  const mtfAnalysis = (() => {
+    try {
+      const parsed = JSON.parse((trade as any)?.mtfAnalysis || 'null');
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, any> : {};
+    } catch {
+      return {};
+    }
+  })();
+  const mtfTimeframes = normalizeMtfTimeframes(mtfAnalysis.__timeframes);
+  const mtfScenarios = Array.isArray(mtfAnalysis.scenarios) ? mtfAnalysis.scenarios as MTFScenario[] : [];
+  const updateMtfTimeframes = (timeframes: string[]) => {
+    const next = { ...mtfAnalysis, __timeframes: normalizeMtfTimeframes(timeframes) };
+    handleChange('mtfAnalysis' as any, JSON.stringify(next));
+  };
+  const addMtfTimeframe = () => {
+    const value = newMtfTimeframe.trim().toUpperCase();
+    if (!value) return;
+    if (mtfTimeframes.includes(value)) {
+      toast.error('این تایم‌فریم قبلاً اضافه شده است');
+      return;
+    }
+    if (mtfTimeframes.length >= 8) {
+      toast.error('حداکثر ۸ تایم‌فریم قابل افزودن است');
+      return;
+    }
+    updateMtfTimeframes([...mtfTimeframes, value]);
+    setNewMtfTimeframe('');
+  };
+  const updateMtfScenarios = (scenarios: MTFScenario[]) => {
+    handleChange('mtfAnalysis' as any, JSON.stringify({
+      ...mtfAnalysis,
+      scenarios,
+      __timeframes: mtfTimeframes,
+    }));
+  };
+  const addMtfScenario = () => {
+    const timeframe = newScenarioTimeframe.trim().toUpperCase() || mtfTimeframes[0] || '15M';
+    updateMtfScenarios([
+      ...mtfScenarios,
+      {
+        id: crypto.randomUUID(),
+        direction: newScenarioDirection,
+        timeframe,
+        trigger: '',
+        invalidation: '',
+        action: '',
+        enabled: true,
+      },
+    ]);
+    setNewScenarioTimeframe('');
+  };
+
+  const saveTrade = useCallback(async (dataToSave: Trade, source: 'manual' | 'autosave' | 'navigation' = 'autosave') => {
+    if (!dataToSave.id) {
+      toast.error('شناسهٔ معامله برای ذخیره پیدا نشد؛ معاملهٔ جدیدی ساخته نشد.');
+      console.error('[TradeSave] rejected UPDATE without trade ID', { source });
+      return false;
+    }
+    const operationId = crypto.randomUUID();
+    console.debug('[TradeSave]', {
+      mode: 'UPDATE',
+      tradeId: dataToSave.id,
+      source,
+      operationId,
+      timestamp: Date.now(),
+    });
     setIsSaving(true);
-    await tradeService.updateTrade(dataToSave.id, dataToSave);
-    lastSavedRef.current = dataToSave;
-    setIsSaving(false);
-    setShowSavedIndicator(true);
-    setTimeout(() => setShowSavedIndicator(false), 2000);
+    try {
+      const saved = await tradeService.updateTrade(dataToSave.id, dataToSave);
+      if (saved) lastSavedRef.current = saved;
+      setShowSavedIndicator(true);
+      setTimeout(() => setShowSavedIndicator(false), 2000);
+      return true;
+    } catch (error) {
+      console.error('[TradeSave] UPDATE failed', { tradeId: dataToSave.id, source, operationId, error });
+      toast.error('ذخیرهٔ معامله ناموفق بود.');
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
   }, []);
+
+  useNavigationGuard({
+    isDirty: Boolean(trade && JSON.stringify(trade) !== JSON.stringify(lastSavedRef.current)),
+    onSave: async () => {
+      if (trade) await saveTrade(trade);
+    },
+  });
 
   useEffect(() => {
     if (!trade || !initialized.current) return;
     const timer = setTimeout(() => {
-      if (JSON.stringify(trade) !== JSON.stringify(lastSavedRef.current)) {
-        saveTrade(trade);
+       if (JSON.stringify(trade) !== JSON.stringify(lastSavedRef.current)) {
+         void saveTrade(trade, 'autosave');
       }
     }, 800);
     return () => clearTimeout(timer);
   }, [trade, saveTrade]);
-
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (trade && JSON.stringify(trade) !== JSON.stringify(lastSavedRef.current)) {
-        tradeService.updateTrade(trade.id, trade);
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [trade]);
-
-  // هشدار هنگام فشردن دکمه برگشت با داده‌های ذخیره‌نشده
-  useEffect(() => {
-    const onPopState = async () => {
-      if (!trade || JSON.stringify(trade) === JSON.stringify(lastSavedRef.current)) return;
-      const shouldLeave = await new Promise<boolean>(resolve => {
-        setLeaveDialog({ show: true, resolve });
-      });
-      if (!shouldLeave) {
-        window.history.pushState(null, '', window.location.href);
-      } else {
-        await tradeService.updateTrade(trade.id, trade);
-        // باگ ۲: هنگام ویرایش، به صفحه جزئیات معامله برگرد نه لیست
-        setLocation(editId ? `/journal/trades/${editId}` : '/journal/trades');
-      }
-    };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, [trade, setLocation, editId]);
 
   // اتودیتکت نتیجه بر اساس سود/زیان
   useEffect(() => {
@@ -384,33 +592,41 @@ export default function NewTrade() {
     }
   }, [trade?.profitLoss, trade?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleLeaveDialogConfirm = (leave: boolean) => {
-    setLeaveDialog(prev => {
-      prev.resolve?.(leave);
-      return { show: false };
-    });
-  };
+  // اگر سود/زیان وارد شده باشد، معامله پایان‌یافته است؛ این برای معاملات
+  // قدیمی که دستی تکمیل می‌شوند هم همان رفتار ایمپورت را حفظ می‌کند.
+  useEffect(() => {
+    if (!trade || !initialized.current) return;
+    if (typeof trade.profitLoss !== 'number' || !Number.isFinite(trade.profitLoss)) return;
+    const result = trade.profitLoss > 0 ? 'win' : trade.profitLoss < 0 ? 'loss' : 'breakeven';
+    if (trade.status !== 'closed' || trade.result !== result) {
+      setTrade(prev => prev ? { ...prev, status: 'closed', result } : prev);
+    }
+  }, [trade?.profitLoss, trade?.status, trade?.result]);
 
   // باگ ۲: وقتی در حال ویرایش معامله هستیم، برگشت به صفحه جزئیات معامله می‌رود نه لیست
-  const backUrl = editId ? `/journal/trades/${editId}` : '/journal/trades';
+  const backUrl = returnTo || (editId ? `/journal/trades/${editId}` : '/journal/trades');
 
   const handleCancel = async () => {
-    if (trade && JSON.stringify(trade) !== JSON.stringify(lastSavedRef.current)) {
-      await tradeService.updateTrade(trade.id, trade);
-    }
-    setLocation(backUrl);
+    requestNavigation(backUrl);
   };
 
   const handleDateChange = (field: 'openedAt' | 'closedAt', dateString: string) => {
-    const timestamp = new Date(dateString).getTime();
+    const timestamp = parseTradingDateTimeInput(dateString);
+    if (Number.isNaN(timestamp)) return;
     handleChange(field, timestamp);
+
+    // اگر سشن قبلی خالی یا خودکار بوده، با تغییر ساعت بازشدن آن را دوباره
+    // محاسبه کن؛ سشن انتخاب‌شدهٔ دستی کاربر را بازنویسی نکن.
+    if (field === 'openedAt' && trade) {
+      const previousAutoSession = detectTradingSession(trade.openedAt);
+      if (!trade.tradingSession || trade.tradingSession === previousAutoSession) {
+        handleChange('tradingSession', detectTradingSession(timestamp));
+      }
+    }
   };
 
   const formatDateForInput = (timestamp: number | null) => {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
-    date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
-    return date.toISOString().slice(0, 16);
+    return getTradingDateTimeInput(timestamp);
   };
 
   const computeRMultiple = () => {
@@ -443,6 +659,13 @@ export default function NewTrade() {
   const review = trade ? JSON.parse(trade.review || '{}') : {};
   const tags = trade ? JSON.parse(trade.tags || '[]') as string[] : [];
   const computedR = computeRMultiple();
+  const netPnl = trade ? getNetPnl(trade) : null;
+  const availableEmotions = [
+    ...EMOTIONS,
+    ...journalCustomEmotions
+      .filter(id => !EMOTIONS.some(emotion => emotion.id === id))
+      .map(id => ({ id, label: id, color: 'bg-sky-500' })),
+  ];
 
   if (!trade) {
     return <div className="p-8 text-center text-muted-foreground animate-pulse">Initializing trade...</div>;
@@ -452,7 +675,7 @@ export default function NewTrade() {
     <div className="w-full min-w-0 max-w-4xl mx-auto space-y-6 pb-24 animate-in fade-in duration-500">
       <div className="flex flex-col gap-3 border-b pb-4 sticky top-0 bg-background/80 backdrop-blur z-10 pt-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-          <Button variant="ghost" size="icon" onClick={() => setLocation(backUrl)}>
+          <Button variant="ghost" size="icon" onClick={() => requestNavigation(backUrl)}>
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div className="min-w-0">
@@ -486,7 +709,17 @@ export default function NewTrade() {
             </Button>
           </div>
           <Button className="order-1 flex-1 sm:order-none sm:flex-none" variant="outline" onClick={handleCancel}>Cancel</Button>
-          <Button className="order-2 flex-1 whitespace-nowrap sm:order-none sm:flex-none" onClick={async () => { if (trade) { await tradeService.updateTrade(trade.id, trade); } setLocation(`/journal/trades/${trade.id}`); }}>
+          <Button className="order-2 flex-1 whitespace-nowrap sm:order-none sm:flex-none" onClick={async () => {
+            if (trade) {
+               const saved = await saveTrade(trade, 'manual');
+               if (saved) {
+                 const detailPath = returnTo
+                   ? `/journal/trades/${trade.id}?returnTo=${encodeURIComponent(returnTo)}`
+                   : `/journal/trades/${trade.id}`;
+                 setLocation(detailPath);
+               }
+            }
+          }}>
             <Eye className="w-4 h-4 mr-2" /> Save & View
           </Button>
         </div>
@@ -511,10 +744,12 @@ export default function NewTrade() {
               <SymbolSelector
                 value={trade.symbol}
                 onChange={v => {
-                  handleChange('symbol', v.toUpperCase());
-                  // auto-set market based on symbol
-                  const found = TRADING_SYMBOLS.find(s => s.value === v.toUpperCase());
-                  if (found && !trade.market) handleChange('market', found.market);
+                  const symbol = v.toUpperCase();
+                  handleChange('symbol', symbol);
+                  // Keep the market in sync whenever the symbol changes,
+                  // including when replacing an existing default symbol.
+                  const found = TRADING_SYMBOLS.find(s => s.value === symbol);
+                  handleChange('market', found?.market ?? tradeMarket(symbol));
                 }}
               />
             </div>
@@ -533,7 +768,7 @@ export default function NewTrade() {
             <div className="space-y-2">
               <Label>Market</Label>
               <Select value={trade.market || ''} onValueChange={v => handleChange('market', v)}>
-                <SelectTrigger><SelectValue placeholder="Select Market" /></SelectTrigger>
+               <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select Market" /></SelectTrigger>
                 <SelectContent>
                   {MARKETS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
                 </SelectContent>
@@ -579,7 +814,7 @@ export default function NewTrade() {
             <div className="space-y-2 lg:col-span-3">
               <Label>Strategy</Label>
               <Select value={trade.strategyId || 'none'} onValueChange={v => handleChange('strategyId', v === 'none' ? null : v)}>
-                <SelectTrigger><SelectValue placeholder="Select Strategy" /></SelectTrigger>
+                 <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select Strategy" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">No Strategy</SelectItem>
                   {strategies.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
@@ -595,15 +830,22 @@ export default function NewTrade() {
                   <Plus className="w-3 h-3" /> مدیریت
                 </Button>
               </div>
-              <Select value={(trade as any).accountId || 'none'} onValueChange={v => handleChange('accountId' as any, v === 'none' ? null : v)}>
-                <SelectTrigger>
+               <Select value={(trade as any).accountId || 'none'} onValueChange={v => {
+                 const nextAccountId = v === 'none' ? null : v;
+                 handleChange('accountId' as any, nextAccountId);
+                 const selectedBox = tradingBoxes.find(box => box.id === (trade as any).boxId);
+                 if (selectedBox?.accountId && selectedBox.accountId !== nextAccountId) {
+                   handleChange('boxId' as any, null);
+                 }
+               }}>
+                 <SelectTrigger dir="rtl" className="h-9 text-sm whitespace-normal [&>span]:!line-clamp-none [&>span]:!whitespace-normal">
                   <SelectValue placeholder="انتخاب حساب (اختیاری)" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">بدون حساب</SelectItem>
                   {accounts.map(a => (
                     <SelectItem key={a.id} value={a.id}>
-                      <span className="flex items-center gap-2">
+                      <span className="flex min-w-0 items-center gap-2 whitespace-normal break-words text-right" dir="rtl">
                         <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
                         {a.name}{a.broker ? ` — ${a.broker}` : ''}
                       </span>
@@ -621,13 +863,13 @@ export default function NewTrade() {
                   <Plus className="w-3 h-3" /> مدیریت
                 </Button>
               </div>
-              <Select value={(trade as any).boxId || 'none'} onValueChange={v => handleChange('boxId' as any, v === 'none' ? null : v)}>
-                <SelectTrigger>
+               <Select value={(trade as any).boxId || 'none'} onValueChange={v => handleChange('boxId' as any, v === 'none' ? null : v)}>
+                 <SelectTrigger className="h-9 text-sm">
                   <SelectValue placeholder="انتخاب باکس (اختیاری)" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">بدون باکس</SelectItem>
-                  {tradingBoxes.filter(b => b.status === 'active').map(b => (
+                   {tradingBoxes.filter(b => b.status === 'active' && (!(b as any).accountId || (b as any).accountId === (trade as any).accountId)).map(b => (
                     <SelectItem key={b.id} value={b.id}>
                       <span className="flex items-center gap-2">
                         <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: b.color }} />
@@ -649,7 +891,7 @@ export default function NewTrade() {
               <div className="space-y-2">
                 <Label>سشن معاملاتی</Label>
                 <Select value={(trade as any).tradingSession || ''} onValueChange={v => handleChange('tradingSession' as any, v || null)}>
-                  <SelectTrigger><SelectValue placeholder="انتخاب کنید…" /></SelectTrigger>
+                 <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="انتخاب کنید…" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="london">لندن</SelectItem>
                     <SelectItem value="new-york">نیویورک</SelectItem>
@@ -662,7 +904,7 @@ export default function NewTrade() {
               <div className="space-y-2">
                 <Label>نوع ستاپ</Label>
                 <Select value={(trade as any).setupType || ''} onValueChange={v => handleChange('setupType' as any, v || null)}>
-                  <SelectTrigger><SelectValue placeholder="انتخاب کنید…" /></SelectTrigger>
+                 <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="انتخاب کنید…" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="break-and-retest">Break and Retest</SelectItem>
                     <SelectItem value="fvg">FVG (Fair Value Gap)</SelectItem>
@@ -693,15 +935,15 @@ export default function NewTrade() {
             </div>
             <div className="space-y-2">
               <Label>Entry Price</Label>
-              <Input type="text" inputMode="decimal" step="any" value={trade.entryPrice || ''} onChange={e => handleChange('entryPrice', parseFloat(e.target.value) || 0)} />
+              <NumericInput value={trade.entryPrice} onValueChange={value => handleChange('entryPrice', value ?? 0)} />
             </div>
             <div className="space-y-2">
               <Label>Stop Loss</Label>
-              <Input type="text" inputMode="decimal" step="any" value={trade.stopLoss || ''} onChange={e => handleChange('stopLoss', parseFloat(e.target.value) || 0)} />
+              <NumericInput value={trade.stopLoss} onValueChange={value => handleChange('stopLoss', value ?? 0)} />
             </div>
             <div className="space-y-2">
               <Label>Take Profit</Label>
-              <Input type="text" inputMode="decimal" step="any" value={trade.takeProfit || ''} onChange={e => handleChange('takeProfit', parseFloat(e.target.value) || null)} />
+              <NumericInput value={trade.takeProfit} onValueChange={value => handleChange('takeProfit', value)} />
             </div>
           </div>
         </section>
@@ -720,10 +962,9 @@ export default function NewTrade() {
             ].map(f => (
               <div key={f.key} className="space-y-2">
                 <Label>{f.label}</Label>
-                <Input
-                  type="text" inputMode="decimal"
-                  value={(trade as any)[f.key] || ''}
-                  onChange={e => handleChange(f.key as any, parseFloat(e.target.value) || null)}
+                <NumericInput
+                  value={(trade as any)[f.key]}
+                  onValueChange={value => handleChange(f.key as any, value)}
                   placeholder="—"
                 />
               </div>
@@ -740,9 +981,12 @@ export default function NewTrade() {
               <Label>حجم پوزیشن (لات)</Label>
               <Select
                 value={trade.positionSize != null ? String(trade.positionSize) : ''}
-                onValueChange={v => handleChange('positionSize', v ? parseFloat(v) : null)}
+                onValueChange={v => {
+                  setPositionSizeInput('');
+                  handleChange('positionSize', v ? parseFloat(v) : null);
+                }}
               >
-                <SelectTrigger>
+                <SelectTrigger className="h-9 text-sm">
                   <SelectValue placeholder="انتخاب حجم…" />
                 </SelectTrigger>
                 <SelectContent className="max-h-60">
@@ -756,13 +1000,14 @@ export default function NewTrade() {
               {/* ورودی دستی برای مقادیر سفارشی */}
               <Input
                 type="text" inputMode="decimal" placeholder="یا مقدار دلخواه وارد کنید…"
-                value={trade.positionSize != null && !POSITION_SIZE_OPTIONS.includes(trade.positionSize) ? String(trade.positionSize) : ''}
+                value={positionSizeInput}
                 onChange={e => {
-                  const v = parseFloat(e.target.value);
-                  if (!isNaN(v) && v > 0) handleChange('positionSize', v);
-                  else if (e.target.value === '') handleChange('positionSize', null);
+                  const value = normalizeDecimalInput(e.target.value);
+                  setPositionSizeInput(value);
+                  handleChange('positionSize', customDecimalValue(value));
                 }}
                 className="h-8 text-sm mt-1"
+                dir="ltr"
               />
             </div>
 
@@ -771,9 +1016,12 @@ export default function NewTrade() {
               <Label>ریسک (٪)</Label>
               <Select
                 value={trade.riskPercentage != null ? String(trade.riskPercentage) : ''}
-                onValueChange={v => handleChange('riskPercentage', v ? parseFloat(v) : null)}
+                onValueChange={v => {
+                  setRiskPercentageInput('');
+                  handleChange('riskPercentage', v ? parseFloat(v) : null);
+                }}
               >
-                <SelectTrigger>
+                <SelectTrigger className="h-9 text-sm">
                   <SelectValue placeholder="انتخاب ریسک…" />
                 </SelectTrigger>
                 <SelectContent className="max-h-60">
@@ -786,19 +1034,20 @@ export default function NewTrade() {
               </Select>
               <Input
                 type="text" inputMode="decimal" placeholder="یا مقدار دلخواه…"
-                value={trade.riskPercentage != null && !RISK_PERCENTAGE_OPTIONS.includes(trade.riskPercentage) ? String(trade.riskPercentage) : ''}
+                value={riskPercentageInput}
                 onChange={e => {
-                  const v = parseFloat(e.target.value);
-                  if (!isNaN(v) && v > 0) handleChange('riskPercentage', v);
-                  else if (e.target.value === '') handleChange('riskPercentage', null);
+                  const value = normalizeDecimalInput(e.target.value);
+                  setRiskPercentageInput(value);
+                  handleChange('riskPercentage', customDecimalValue(value));
                 }}
                 className="h-8 text-sm mt-1"
+                dir="ltr"
               />
             </div>
 
             <div className="space-y-2">
               <Label>مقدار ریسک ($)</Label>
-              <Input type="text" inputMode="decimal" step="any" value={trade.riskAmount || ''} onChange={e => handleChange('riskAmount', parseFloat(e.target.value) || null)} />
+              <NumericInput value={trade.riskAmount} onValueChange={value => handleChange('riskAmount', value)} />
             </div>
           </div>
         </section>
@@ -815,6 +1064,27 @@ export default function NewTrade() {
                 onChange={e => handleChange('entryReason' as any, e.target.value || null)}
                 className="min-h-[100px]"
               />
+            </div>
+          </section>
+        )}
+
+        {!isQuickMode && (
+          <section className="space-y-4">
+            <div className="flex items-center justify-between gap-3 border-b pb-2">
+              <h2 className="text-lg font-semibold">۳ج. briefing پیش از معامله</h2>
+              <span className="text-xs text-muted-foreground">قابل ویرایش و ذخیره</span>
+            </div>
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-2">
+              <Label>تصویر ذهنی و برنامهٔ اجرای معامله</Label>
+              <Textarea
+                placeholder="اگر بازار این شرایط را داشت وارد می‌شوم؛ اگر این شرط نقض شد، معامله را لغو می‌کنم…"
+                value={trade.preTradeBriefing || ''}
+                onChange={e => handleChange('preTradeBriefing' as any, e.target.value || null)}
+                className="min-h-[110px] bg-background/70"
+              />
+              <p className="text-xs text-muted-foreground">
+                این متن همراه معامله ذخیره می‌شود تا قبل و بعد از اجرا بتوانید برنامهٔ اولیه را مقایسه کنید.
+              </p>
             </div>
           </section>
         )}
@@ -857,27 +1127,44 @@ export default function NewTrade() {
               </div>
               <div className="space-y-2">
                 <Label>Exit Price</Label>
-                <Input type="text" inputMode="decimal" step="any" value={trade.exitPrice || ''} onChange={e => handleChange('exitPrice', parseFloat(e.target.value) || null)} />
+                <NumericInput value={trade.exitPrice} onValueChange={value => handleChange('exitPrice', value)} />
               </div>
               <div className="space-y-2">
                 <Label>P&L</Label>
-                <Input type="text" inputMode="decimal" step="any" value={trade.profitLoss || ''} onChange={e => handleChange('profitLoss', parseFloat(e.target.value) || null)} />
+                <NumericInput value={trade.profitLoss} onValueChange={value => handleChange('profitLoss', value)} />
               </div>
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <Label>R Multiple</Label>
                   {computedR && <span className="text-xs text-muted-foreground">Auto: {computedR}R</span>}
                 </div>
-                <Input type="text" inputMode="decimal" step="any" value={trade.rMultiple || ''} onChange={e => handleChange('rMultiple', parseFloat(e.target.value) || null)} />
+                <NumericInput value={trade.rMultiple} onValueChange={value => handleChange('rMultiple', value)} />
               </div>
               <div className="space-y-2">
-                <Label>Fees</Label>
-                <Input type="text" inputMode="decimal" step="any" value={trade.fees || ''} onChange={e => handleChange('fees', parseFloat(e.target.value) || null)} />
+                <Label>سایر هزینه‌ها</Label>
+                <NumericInput value={trade.fees} onValueChange={value => handleChange('fees', value)} />
               </div>
-              <div className="space-y-2 lg:col-span-3">
+              <div className="space-y-2">
+                <Label>کمیسیون</Label>
+                <NumericInput value={trade.commission ?? null} onValueChange={value => handleChange('commission', value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>اسپرد</Label>
+                <NumericInput value={trade.spread ?? null} onValueChange={value => handleChange('spread', value)} />
+              </div>
+              <div className="space-y-2 lg:col-span-2">
                 <Label>Reason for Exit</Label>
                 <Input value={trade.reasonForExit || ''} onChange={e => handleChange('reasonForExit', e.target.value)} placeholder="Hit target, trailed stop, etc." />
               </div>
+              {trade.profitLoss !== null && (
+                <div className="lg:col-span-4 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+                  <span className="text-muted-foreground">سود/زیان خالص پس از هزینه‌ها: </span>
+                  <strong className={netPnl !== null && netPnl >= 0 ? 'text-emerald-500' : 'text-rose-500'} dir="ltr">
+                    {netPnl?.toFixed(2)}
+                  </strong>
+                  <span className="text-xs text-muted-foreground"> (کمیسیون، اسپرد و سایر هزینه‌ها کسر شده‌اند)</span>
+                </div>
+              )}
             </div>
           </section>
         )}
@@ -989,7 +1276,7 @@ export default function NewTrade() {
         {!isQuickMode && (<section className="space-y-6">
           <h2 className="text-lg font-semibold border-b pb-2">۶. وضعیت احساسی</h2>
           <div className="flex flex-wrap gap-2">
-            {EMOTIONS.map(emo => {
+            {availableEmotions.map(emo => {
               const isSelected = currentEmotions.includes(emo.id);
               return (
                 <button
@@ -1020,11 +1307,45 @@ export default function NewTrade() {
         {!isQuickMode && (
           <section className="space-y-4">
             <h2 className="text-lg font-semibold border-b pb-2">۶ب. تحلیل چند تایم‌فریمی</h2>
-            {(['4H', '15M', '5M', '1M'] as const).map(tf => {
-              const mtf = (() => { try { return JSON.parse((trade as any).mtfAnalysis || 'null') || {}; } catch { return {}; } })();
-              const tfData = mtf[tf] || {};
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border p-3">
+              <span className="text-xs text-muted-foreground">تایم‌فریم‌ها:</span>
+              {mtfTimeframes.map(tf => (
+                <span key={tf} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs">
+                  {tf}
+                  {mtfTimeframes.length > 1 && (
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() => {
+                        const next = { ...mtfAnalysis };
+                        delete next[tf];
+                        handleChange('mtfAnalysis' as any, JSON.stringify({ ...next, __timeframes: mtfTimeframes.filter(item => item !== tf) }));
+                      }}
+                      aria-label={`حذف تایم‌فریم ${tf}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </span>
+              ))}
+              <div className="flex items-center gap-1">
+                <Input
+                  value={newMtfTimeframe}
+                  onChange={e => setNewMtfTimeframe(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMtfTimeframe(); } }}
+                  placeholder="مثلاً 1H"
+                  className="h-7 w-24 text-xs"
+                  dir="ltr"
+                />
+                <Button type="button" variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={addMtfTimeframe}>
+                  <Plus className="h-3 w-3" /> افزودن
+                </Button>
+              </div>
+            </div>
+            {mtfTimeframes.map(tf => {
+              const tfData = mtfAnalysis[tf] || {};
               const update = (field: string, value: string) => {
-                const newMtf = { ...mtf, [tf]: { ...tfData, [field]: value } };
+                const newMtf = { ...mtfAnalysis, [tf]: { ...tfData, [field]: value }, __timeframes: mtfTimeframes };
                 handleChange('mtfAnalysis' as any, JSON.stringify(newMtf));
               };
               return (
@@ -1049,6 +1370,113 @@ export default function NewTrade() {
                 </Card>
               );
             })}
+            <div className="rounded-xl border border-dashed border-primary/30 bg-primary/[0.03] p-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-semibold text-sm">سناریوهای شرطی خرید و فروش</h3>
+                  <p className="text-xs text-muted-foreground mt-1">برای هر تایم‌فریم، trigger، شرط نقض و اقدام بعدی را ثبت کنید.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select value={newScenarioDirection} onValueChange={value => setNewScenarioDirection(value as MTFScenario['direction'])}>
+                    <SelectTrigger className="h-8 w-28 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="both">هر دو جهت</SelectItem>
+                      <SelectItem value="long">خرید (Long)</SelectItem>
+                      <SelectItem value="short">فروش (Short)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    value={newScenarioTimeframe}
+                    onChange={e => setNewScenarioTimeframe(e.target.value)}
+                    placeholder="تایم‌فریم"
+                    className="h-8 w-24 text-xs"
+                    dir="ltr"
+                  />
+                  <Button type="button" variant="outline" size="sm" className="h-8 gap-1 text-xs" onClick={addMtfScenario}>
+                    <Plus className="h-3 w-3" /> سناریو
+                  </Button>
+                </div>
+              </div>
+              {mtfScenarios.length === 0 ? (
+                <p className="rounded-lg bg-muted/40 px-3 py-3 text-xs text-muted-foreground">
+                  هنوز سناریویی ثبت نشده است. سناریوهای جایگزین، شرط ورود و نقطهٔ لغو را اینجا نگه دارید.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {mtfScenarios.map((scenario, index) => (
+                    <div key={scenario.id} className="rounded-lg border bg-card/70 p-3 space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold text-primary">سناریو {index + 1}</span>
+                        <Select
+                          value={scenario.direction}
+                          onValueChange={value => updateMtfScenarios(mtfScenarios.map(item => item.id === scenario.id ? { ...item, direction: value as MTFScenario['direction'] } : item))}
+                        >
+                          <SelectTrigger className="h-8 w-28 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="both">هر دو جهت</SelectItem>
+                            <SelectItem value="long">خرید (Long)</SelectItem>
+                            <SelectItem value="short">فروش (Short)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          value={scenario.timeframe}
+                          onChange={e => updateMtfScenarios(mtfScenarios.map(item => item.id === scenario.id ? { ...item, timeframe: e.target.value.toUpperCase() } : item))}
+                          className="h-8 w-24 text-xs"
+                          dir="ltr"
+                          placeholder="15M"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="mr-auto h-8 text-xs text-destructive hover:text-destructive"
+                          onClick={() => updateMtfScenarios(mtfScenarios.filter(item => item.id !== scenario.id))}
+                        >
+                          <X className="h-3.5 w-3.5 ml-1" /> حذف
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">شرط فعال‌شدن (Trigger)</Label>
+                          <Textarea
+                            value={scenario.trigger}
+                            onChange={e => updateMtfScenarios(mtfScenarios.map(item => item.id === scenario.id ? { ...item, trigger: e.target.value } : item))}
+                            placeholder="مثلاً شکست سقف و تثبیت"
+                            className="min-h-[64px] text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">شرط نقض (Invalidation)</Label>
+                          <Textarea
+                            value={scenario.invalidation}
+                            onChange={e => updateMtfScenarios(mtfScenarios.map(item => item.id === scenario.id ? { ...item, invalidation: e.target.value } : item))}
+                            placeholder="چه چیزی سناریو را باطل می‌کند؟"
+                            className="min-h-[64px] text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">اقدام بعدی</Label>
+                          <Textarea
+                            value={scenario.action}
+                            onChange={e => updateMtfScenarios(mtfScenarios.map(item => item.id === scenario.id ? { ...item, action: e.target.value } : item))}
+                            placeholder="ورود، صبر، لغو یا بررسی مجدد"
+                            className="min-h-[64px] text-xs"
+                          />
+                        </div>
+                      </div>
+                      <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={scenario.enabled}
+                          onChange={e => updateMtfScenarios(mtfScenarios.map(item => item.id === scenario.id ? { ...item, enabled: e.target.checked } : item))}
+                        />
+                        سناریو در briefing فعال باشد
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </section>
         )}
 
@@ -1133,7 +1561,7 @@ export default function NewTrade() {
             <div className="space-y-2">
               <Label>Tags</Label>
               <Input 
-                placeholder="Press Enter to add tags (e.g., trend-following, fvg, overtrading)" 
+                 placeholder="با Enter برچسب اضافه کنید (مثلاً FVG، اسکالپ)"
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
@@ -1145,6 +1573,11 @@ export default function NewTrade() {
                   }
                 }}
               />
+              {journalCustomTags.length > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  برچسب‌های شخصی شما: {journalCustomTags.join('، ')}
+                </p>
+              )}
               <div className="flex flex-wrap gap-2 mt-2">
                 {tags.map(tag => (
                   <span key={tag} className="bg-primary/10 text-primary px-2 py-1 rounded-md text-sm flex items-center gap-1">
@@ -1181,21 +1614,6 @@ export default function NewTrade() {
 
       </div>
 
-      {/* دیالوگ هشدار داده ذخیره‌نشده */}
-      <Dialog open={leaveDialog.show} onOpenChange={open => !open && handleLeaveDialogConfirm(false)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>تغییرات ذخیره نشده</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            تغییراتی که وارد کردید هنوز ذخیره نشده‌اند. آیا می‌خواهید ذخیره شوند و از این صفحه خارج شوید؟
-          </p>
-          <DialogFooter className="gap-2 flex-col sm:flex-row">
-            <Button variant="outline" onClick={() => handleLeaveDialogConfirm(false)}>بمانید</Button>
-            <Button variant="destructive" onClick={() => handleLeaveDialogConfirm(true)}>ذخیره و خروج</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

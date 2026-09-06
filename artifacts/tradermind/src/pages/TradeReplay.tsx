@@ -5,6 +5,7 @@ import {
   parseCSVCandles, getPersonalizedSuggestions, generateLessonSuggestion,
   getReplayAnalytics, exportReplayData, getAlternativeAnalysis,
   getSimilarDatasets,
+  normalizeReplayCandle,
 } from '../services/replayService';
 import {
   ReplayDataset, ReplaySession, ReplayDecision, ReplayPlaylist,
@@ -13,6 +14,7 @@ import {
 } from '../db/database';
 import { knowledgeService } from '../services/knowledgeService';
 import { db } from '../db/database';
+import { ReplayErrorBoundary } from '../components/errorBoundaries/ReplayErrorBoundary';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -22,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { useToast } from '../hooks/use-toast';
+import StoredImage from '../components/StoredImage';
 import {
   Play, Pause, SkipForward, Eye, EyeOff, ChevronRight, ChevronLeft,
   Plus, Upload, Trash2, BarChart3, TrendingUp, TrendingDown,
@@ -43,7 +46,13 @@ interface CandleChartProps {
 }
 
 function CandleChart({ candles, height = 220, simulatedEntry, simulatedSL, simulatedTP }: CandleChartProps) {
-  if (candles.length === 0) return (
+  const safeCandles = candles.filter(c =>
+    [c.timestamp, c.open, c.high, c.low, c.close].every(Number.isFinite)
+    && c.high >= Math.max(c.open, c.close)
+    && c.low <= Math.min(c.open, c.close)
+    && c.high >= c.low
+  );
+  if (safeCandles.length === 0) return (
     <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
       <BarChart3 className="h-8 w-8 opacity-30 mr-2" />داده کندلی موجود نیست
     </div>
@@ -55,9 +64,12 @@ function CandleChart({ candles, height = 220, simulatedEntry, simulatedSL, simul
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
 
-  const prices = candles.flatMap(c => [c.high, c.low]);
-  let minP = Math.min(...prices);
-  let maxP = Math.max(...prices);
+  let minP = Infinity;
+  let maxP = -Infinity;
+  for (const candle of safeCandles) {
+    minP = Math.min(minP, candle.low);
+    maxP = Math.max(maxP, candle.high);
+  }
   // Add lines to range if needed
   [simulatedEntry, simulatedSL, simulatedTP].filter(Boolean).forEach(p => {
     if (p! < minP) minP = p!;
@@ -67,9 +79,9 @@ function CandleChart({ candles, height = 220, simulatedEntry, simulatedSL, simul
   const pad5 = range * 0.05;
   minP -= pad5; maxP += pad5;
 
-  const toX = (i: number) => padL + (i + 0.5) * (chartW / candles.length);
+  const toX = (i: number) => padL + (i + 0.5) * (chartW / safeCandles.length);
   const toY = (p: number) => padT + ((maxP - p) / (maxP - minP)) * chartH;
-  const candleW = Math.max(2, Math.min(14, (chartW / candles.length) * 0.7));
+  const candleW = Math.max(2, Math.min(14, (chartW / safeCandles.length) * 0.7));
 
   // Price ticks
   const nTicks = 4;
@@ -100,7 +112,7 @@ function CandleChart({ candles, height = 220, simulatedEntry, simulatedSL, simul
       )}
 
       {/* Candles */}
-      {candles.map((c, i) => {
+      {safeCandles.map((c, i) => {
         const x = toX(i);
         const isUp = c.close >= c.open;
         const color = isUp ? '#22c55e' : '#ef4444';
@@ -116,8 +128,8 @@ function CandleChart({ candles, height = 220, simulatedEntry, simulatedSL, simul
       })}
 
       {/* Time axis */}
-      {candles.length <= 30
-        ? candles.map((c, i) => i % Math.ceil(candles.length / 6) === 0 && (
+      {safeCandles.length <= 30
+        ? safeCandles.map((c, i) => i % Math.ceil(safeCandles.length / 6) === 0 && (
           <text key={i} x={toX(i)} y={H - 4} fontSize={8} fill="#6b7280" textAnchor="middle">
             {new Date(c.timestamp).toLocaleString('fa-IR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
           </text>
@@ -146,9 +158,12 @@ function ScreenshotViewer({ item, step, total }: { item: ReplayScreenshotItem; s
         <span>{step + 1} / {total}</span>
       </div>
       <div className="rounded-lg overflow-hidden border border-border/40 bg-black/20">
-        <img
-          src={item.dataUrl}
+        <StoredImage
+          source={item.dataUrl}
           alt={item.label || `Step ${step + 1}`}
+          enableViewer
+          showDownload
+          filename={item.label || `replay-step-${step + 1}`}
           className="w-full object-contain max-h-72"
         />
       </div>
@@ -907,15 +922,22 @@ function DatasetImportDialog({ open, onClose, onImported }: {
         if (!jsonContent.trim()) throw new Error('JSON خالی است');
         const parsed = JSON.parse(jsonContent);
         // Support array of {t/time/timestamp, o/open, h/high, l/low, c/close, v/volume}
-        const candles: ReplayCandle[] = (Array.isArray(parsed) ? parsed : parsed.candles ?? parsed.data ?? []).map((item: Record<string, unknown>) => ({
-          timestamp: Number(item.t ?? item.time ?? item.timestamp ?? 0),
-          open: Number(item.o ?? item.open ?? 0),
-          high: Number(item.h ?? item.high ?? 0),
-          low: Number(item.l ?? item.low ?? 0),
-          close: Number(item.c ?? item.close ?? 0),
-          volume: item.v !== undefined ? Number(item.v) : item.volume !== undefined ? Number(item.volume) : undefined,
-          timeframe,
-        }));
+         const rawCandles = Array.isArray(parsed)
+           ? parsed
+           : parsed && typeof parsed === 'object'
+             ? ((parsed as Record<string, unknown>).candles ?? (parsed as Record<string, unknown>).data ?? [])
+             : [];
+         const candles: ReplayCandle[] = Array.isArray(rawCandles)
+           ? rawCandles
+             .map((item, index) => item && typeof item === 'object'
+               ? normalizeReplayCandle(
+                 item as Record<string, unknown>,
+                 timeframe,
+                 Date.now() - (rawCandles.length - index) * 60_000,
+               )
+               : null)
+             .filter((candle): candle is ReplayCandle => candle !== null)
+           : [];
         if (candles.length === 0) throw new Error('هیچ کندلی در JSON یافت نشد');
         const now = Date.now();
         const d: ReplayDataset = {
@@ -1004,7 +1026,14 @@ function DatasetImportDialog({ open, onClose, onImported }: {
                 <div className="mt-2 space-y-1">
                   {screenshots.map((s, i) => (
                     <div key={i} className="flex items-center gap-2">
-                      <img src={s.dataUrl} className="h-8 w-12 object-cover rounded" alt="" />
+                      <StoredImage
+                        source={s.dataUrl}
+                        className="h-8 w-12 object-cover rounded"
+                        alt=""
+                        enableViewer
+                        showDownload
+                        filename={s.label || 'replay-screenshot'}
+                      />
                       <Input
                         value={s.label}
                         onChange={e => setScreenshots(prev => prev.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
@@ -1617,23 +1646,32 @@ export default function TradeReplay() {
   const [showPlaylistCreate, setShowPlaylistCreate] = useState(false);
   const [activeTab, setActiveTab] = useState('start');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const { toast } = useToast();
 
   const load = useCallback(async () => {
-    const [ds, ss, pl, an, sg] = await Promise.all([
-      datasetService.getAll(),
-      sessionService.getAll(),
-      playlistService.getAll(),
-      getReplayAnalytics(),
-      getPersonalizedSuggestions(),
-    ]);
-    setDatasets(ds);
-    setSessions(ss);
-    setPlaylists(pl);
-    setAnalytics(an);
-    setSuggestions(sg);
-    setLoading(false);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [ds, ss, pl, an, sg] = await Promise.all([
+        datasetService.getAll(),
+        sessionService.getAll(),
+        playlistService.getAll(),
+        getReplayAnalytics(),
+        getPersonalizedSuggestions(),
+      ]);
+      setDatasets(ds);
+      setSessions(ss);
+      setPlaylists(pl);
+      setAnalytics(an);
+      setSuggestions(sg);
+    } catch (error) {
+      console.error('[TradeReplay] load failed', error);
+      setLoadError('بارگذاری داده‌های ری‌پلی انجام نشد. پایگاه داده محلی را دوباره امتحان کنید.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -1641,72 +1679,122 @@ export default function TradeReplay() {
   // Load active session decisions
   useEffect(() => {
     if (activeSession) {
-      decisionService.forSession(activeSession.id).then(setActiveDecisions);
+      let cancelled = false;
+      decisionService.forSession(activeSession.id)
+        .then(decisions => { if (!cancelled) setActiveDecisions(decisions); })
+        .catch(error => {
+          if (!cancelled) {
+            console.error('[TradeReplay] decisions load failed', error);
+            toast({ title: 'تصمیم‌های این جلسه بارگذاری نشد', variant: 'destructive' });
+            setActiveDecisions([]);
+          }
+        });
+      return () => { cancelled = true; };
     }
+    setActiveDecisions([]);
+    return undefined;
   }, [activeSession?.id, activeSession?.currentStep]);
 
   const handleStartReplay = async (params: Parameters<typeof sessionService.create>[0]) => {
-    const session = await sessionService.create(params);
-    const ds = params.datasetId ? await datasetService.getById(params.datasetId) : null;
-    setActiveSession(session);
-    setActiveDataset(ds ?? null);
-    setShowReview(false);
-    setActiveTab('active');
-    if (session.sourceTradeId) {
-      const trade = await db.trades.get(session.sourceTradeId);
-      setOriginalTrade(trade);
+    try {
+      const session = await sessionService.create(params);
+      const ds = params.datasetId ? await datasetService.getById(params.datasetId) : null;
+      setActiveSession(session);
+      setActiveDataset(ds ?? null);
+      setShowReview(false);
+      setActiveTab('active');
+      if (session.sourceTradeId) {
+        const trade = await db.trades.get(session.sourceTradeId);
+        setOriginalTrade(trade);
+      } else {
+        setOriginalTrade(undefined);
+      }
+      const advanced = await sessionService.advance(session.id, session.revealCount);
+      if (advanced) setActiveSession(advanced);
+    } catch (error) {
+      console.error('[TradeReplay] start failed', error);
+      toast({ title: 'شروع ری‌پلی انجام نشد', description: 'دیتاست حذف شده یا ناقص است.', variant: 'destructive' });
     }
-    // Advance to show initial context
-    const advanced = await sessionService.advance(session.id, session.revealCount);
-    if (advanced) setActiveSession(advanced);
   };
 
   const handleAdvance = async () => {
     if (!activeSession) return;
-    const advanced = await sessionService.advance(activeSession.id, activeSession.revealCount);
-    if (advanced) {
-      setActiveSession(advanced);
-      if (advanced.status === 'completed') toast({ title: 'داده کامل نمایش داده شد' });
+    try {
+      const advanced = await sessionService.advance(activeSession.id, activeSession.revealCount);
+      if (advanced) {
+        setActiveSession(advanced);
+        if (advanced.status === 'completed') toast({ title: 'داده کامل نمایش داده شد' });
+      }
+    } catch (error) {
+      console.error('[TradeReplay] advance failed', error);
+      toast({ title: 'نمایش مرحله بعد انجام نشد', variant: 'destructive' });
     }
   };
 
   const handleDecision = async (d: Parameters<typeof decisionService.log>[1]) => {
     if (!activeSession) return;
-    const decision = await decisionService.log(activeSession.id, { ...d, step: activeSession.currentStep });
-    // Score it
-    const candles = activeDataset ? datasetService.getCandles(activeDataset) : [];
-    await decisionService.scoreDecision(decision.id, activeSession, candles, activeSession.currentStep);
+    try {
+      const decision = await decisionService.log(activeSession.id, { ...d, step: activeSession.currentStep });
+      const candles = activeDataset ? datasetService.getCandles(activeDataset) : [];
+      await decisionService.scoreDecision(decision.id, activeSession, candles, activeSession.currentStep);
 
-    // If trade decision, open simulated position
-    if (d.action === 'long' || d.action === 'short') {
-      await sessionService.openSimulatedPosition(activeSession.id, {
-        direction: d.action,
-        entry: d.entryPrice ?? 0,
-        sl: d.stopLoss ?? 0,
-        tp: d.takeProfit ?? 0,
-        riskPercent: d.riskPercent,
-      });
-      const updated = await db.replaySessions.get(activeSession.id);
-      if (updated) setActiveSession(updated);
+      if (d.action === 'long' || d.action === 'short') {
+        const entry = d.entryPrice;
+        const sl = d.stopLoss;
+        const tp = d.takeProfit;
+        if (
+          typeof entry !== 'number' || !Number.isFinite(entry)
+          || typeof sl !== 'number' || !Number.isFinite(sl)
+          || typeof tp !== 'number' || !Number.isFinite(tp)
+        ) {
+          throw new Error('قیمت ورود، حد ضرر و حد سود باید معتبر باشند');
+        }
+        await sessionService.openSimulatedPosition(activeSession.id, {
+          direction: d.action,
+          entry,
+          sl,
+          tp,
+          riskPercent: d.riskPercent,
+        });
+        const updated = await db.replaySessions.get(activeSession.id);
+        if (updated) setActiveSession(updated);
+      }
+
+      const updatedDecisions = await decisionService.forSession(activeSession.id);
+      setActiveDecisions(updatedDecisions);
+      toast({ title: 'تصمیم ثبت شد ✓' });
+    } catch (error) {
+      console.error('[TradeReplay] decision failed', error);
+      toast({ title: 'ثبت تصمیم انجام نشد', description: error instanceof Error ? error.message : undefined, variant: 'destructive' });
     }
-
-    const updatedDecisions = await decisionService.forSession(activeSession.id);
-    setActiveDecisions(updatedDecisions);
-    toast({ title: 'تصمیم ثبت شد ✓' });
   };
 
   const handleClosePosition = async (price: number) => {
     if (!activeSession) return;
-    await sessionService.closeSimulatedPosition(activeSession.id, price);
-    const updated = await db.replaySessions.get(activeSession.id);
-    if (updated) setActiveSession(updated);
+    if (!Number.isFinite(price)) {
+      toast({ title: 'قیمت خروج معتبر نیست', variant: 'destructive' });
+      return;
+    }
+    try {
+      await sessionService.closeSimulatedPosition(activeSession.id, price);
+      const updated = await db.replaySessions.get(activeSession.id);
+      if (updated) setActiveSession(updated);
+    } catch (error) {
+      console.error('[TradeReplay] close position failed', error);
+      toast({ title: 'بستن موقعیت انجام نشد', variant: 'destructive' });
+    }
   };
 
   const handleUpdateSLTP = async (sl?: number, tp?: number) => {
     if (!activeSession) return;
-    await sessionService.updateSLTP(activeSession.id, sl, tp);
-    const updated = await db.replaySessions.get(activeSession.id);
-    if (updated) setActiveSession(updated);
+    try {
+      await sessionService.updateSLTP(activeSession.id, sl, tp);
+      const updated = await db.replaySessions.get(activeSession.id);
+      if (updated) setActiveSession(updated);
+    } catch (error) {
+      console.error('[TradeReplay] SL/TP update failed', error);
+      toast({ title: 'به‌روزرسانی SL/TP انجام نشد', variant: 'destructive' });
+    }
   };
 
   const handleComplete = () => setShowReview(true);
@@ -1778,6 +1866,16 @@ export default function TradeReplay() {
           {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
         </div>
         <Skeleton className="h-48 rounded-xl" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="max-w-3xl mx-auto py-16 text-center space-y-3" dir="rtl">
+        <AlertCircle className="h-10 w-10 mx-auto text-destructive" />
+        <p className="font-medium">{loadError}</p>
+        <Button onClick={load} className="gap-2"><RefreshCw className="h-4 w-4" />تلاش دوباره</Button>
       </div>
     );
   }
@@ -1942,27 +2040,31 @@ export default function TradeReplay() {
         {/* ── ACTIVE REPLAY TAB ── */}
         <TabsContent value="active">
           {showReview && activeSession ? (
-            <ReviewScreen
+              <ReplayErrorBoundary key={`review-${activeSession.id}`}>
+                <ReviewScreen
               session={activeSession}
               decisions={activeDecisions}
               originalTrade={originalTrade}
               onSaveLessons={handleSaveLessons}
               onClose={() => { setShowReview(false); setActiveSession(null); setActiveTab('history'); load(); }}
               candles={activeDataset ? datasetService.getCandles(activeDataset) : []}
-            />
+                />
+              </ReplayErrorBoundary>
           ) : activeSession ? (
-            <ActiveReplay
-              session={activeSession}
-              dataset={activeDataset}
-              onAdvance={handleAdvance}
-              onDecision={handleDecision}
-              onClosePosition={handleClosePosition}
-              onUpdateSLTP={handleUpdateSLTP}
-              onAbandon={handleAbandon}
-              onComplete={handleComplete}
-              decisions={activeDecisions}
-              coachingMode={activeSession.coachingMode}
-            />
+            <ReplayErrorBoundary key={`active-${activeSession.id}-${activeSession.datasetId ?? 'none'}`}>
+              <ActiveReplay
+                session={activeSession}
+                dataset={activeDataset}
+                onAdvance={handleAdvance}
+                onDecision={handleDecision}
+                onClosePosition={handleClosePosition}
+                onUpdateSLTP={handleUpdateSLTP}
+                onAbandon={handleAbandon}
+                onComplete={handleComplete}
+                decisions={activeDecisions}
+                coachingMode={activeSession.coachingMode}
+              />
+            </ReplayErrorBoundary>
           ) : (
             <div className="text-center py-16 text-muted-foreground">
               <RotateCcw className="h-12 w-12 mx-auto mb-4 opacity-20" />

@@ -17,8 +17,8 @@ export class ReplayErrorBoundary extends Component<Props, State> {
   static getDerivedStateFromError(error: Error): State {
     const msg = error?.message || '';
     let userMessage = 'خطا در بازپخش معامله. داده‌های شما محفوظ است.';
-    if (msg.includes('canvas') || msg.includes('Canvas')) {
-      userMessage = 'خطا در رندر canvas. لطفاً مرورگر خود را به‌روز کنید.';
+    if (msg.includes('canvas') || msg.includes('Canvas') || msg.includes('NaN') || msg.includes('Infinity')) {
+      userMessage = 'دادهٔ نمودار ری‌پلی قابل نمایش نیست. دیتاست را دوباره انتخاب یا وارد کنید.';
     } else if (msg.includes('dataset') || msg.includes('replay')) {
       userMessage = 'داده‌های بازپخش ناقص است. لطفاً معامله را مجدداً انتخاب کنید.';
     }

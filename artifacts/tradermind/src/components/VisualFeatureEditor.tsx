@@ -54,10 +54,14 @@ export default function VisualFeatureEditor({ features, userAddedFeatures, onCha
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNote, setEditNote] = useState('');
   const [editCorrectedValue, setEditCorrectedValue] = useState('');
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editUserLabel, setEditUserLabel] = useState('');
+  const [editUserNotes, setEditUserNotes] = useState('');
 
   const updateFeature = (id: string, patch: Partial<VisualFeature>) => {
     const updated = features.map(f => f.id === id ? { ...f, ...patch } : f);
-    onChange(updated, userAddedFeatures);
+    const updatedUser = userAddedFeatures.map(f => f.id === id ? { ...f, ...patch } : f);
+    onChange(updated, updatedUser);
   };
 
   const removeUserAdded = (id: string) => {
@@ -96,6 +100,20 @@ export default function VisualFeatureEditor({ features, userAddedFeatures, onCha
       correctionNote: editNote || null,
     });
     setEditingId(null);
+  };
+
+  const startUserEdit = (feature: VisualFeature) => {
+    setEditingUserId(feature.id);
+    setEditUserLabel(feature.label);
+    setEditUserNotes(feature.notes ?? '');
+  };
+
+  const saveUserEdit = (feature: VisualFeature) => {
+    onChange(features, userAddedFeatures.map(item => item.id === feature.id
+      ? { ...item, label: editUserLabel.trim() || item.label, notes: editUserNotes.trim() || null }
+      : item
+    ));
+    setEditingUserId(null);
   };
 
   const availableFeatures = FEATURE_CATEGORIES.find(c => c.id === addCategory)?.features ?? [];
@@ -242,18 +260,35 @@ export default function VisualFeatureEditor({ features, userAddedFeatures, onCha
       {userAddedFeatures.length > 0 && (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">ویژگی‌های اضافه‌شده توسط کاربر:</p>
-          <div className="flex flex-wrap gap-2">
+          <div className="space-y-2">
             {userAddedFeatures.map(f => (
-              <span
+              <div
                 key={f.id}
-                className="inline-flex items-center gap-1 text-xs px-2 py-1 bg-blue-500/15
-                           border border-blue-500/30 text-blue-300 rounded-full"
+                className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-2"
               >
-                {f.label}
-                <button onClick={() => removeUserAdded(f.id)} className="hover:text-red-400 transition-colors">
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-blue-300">{f.label}</span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => editingUserId === f.id ? setEditingUserId(null) : startUserEdit(f)} className="text-muted-foreground hover:text-blue-400 transition-colors" aria-label="ویرایش ویژگی">
+                      <Edit2 className="w-3 h-3" />
+                    </button>
+                    <button onClick={() => removeUserAdded(f.id)} className="text-muted-foreground hover:text-red-400 transition-colors" aria-label="حذف ویژگی">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+                {f.notes && editingUserId !== f.id && <p className="mt-1 text-[11px] text-muted-foreground">{f.notes}</p>}
+                {editingUserId === f.id && (
+                  <div className="mt-2 space-y-2 border-t border-blue-500/20 pt-2">
+                    <Input value={editUserLabel} onChange={e => setEditUserLabel(e.target.value)} className="h-8 text-xs" placeholder="عنوان ویژگی" />
+                    <Input value={editUserNotes} onChange={e => setEditUserNotes(e.target.value)} className="h-8 text-xs" placeholder="توضیح مفهومی یا مشاهده شما" />
+                    <div className="flex gap-2">
+                      <Button size="sm" className="h-7 text-xs" onClick={() => saveUserEdit(f)}>ذخیره</Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingUserId(null)}>لغو</Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         </div>

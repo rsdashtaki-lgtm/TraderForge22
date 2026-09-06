@@ -14,13 +14,90 @@ function parseJSON<T>(s: string | null | undefined, fallback: T): T {
   try { return JSON.parse(s) as T; } catch { return fallback; }
 }
 
+function createId(prefix: string): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function finiteNumber(value: unknown): number | null {
+  const number = typeof value === 'number' ? value : Number(String(value ?? '').trim());
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeTimestamp(value: unknown, fallback: number): number {
+  const numeric = finiteNumber(value);
+  if (numeric !== null && numeric > 0) {
+    return numeric < 1e12 ? numeric * 1000 : numeric;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      if (quoted && line[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === ',' && !quoted) {
+      cells.push(cell.trim());
+      cell = '';
+    } else {
+      cell += char;
+    }
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+export function normalizeReplayCandle(
+  item: Partial<ReplayCandle> & Record<string, unknown>,
+  timeframe: string,
+  fallbackTimestamp: number,
+): ReplayCandle | null {
+  const open = finiteNumber(item.open ?? item.o);
+  const close = finiteNumber(item.close ?? item.c);
+  if (open === null || close === null) return null;
+
+  const highValue = finiteNumber(item.high ?? item.h);
+  const lowValue = finiteNumber(item.low ?? item.l);
+  const high = highValue ?? Math.max(open, close);
+  const low = lowValue ?? Math.min(open, close);
+  if (!Number.isFinite(high) || !Number.isFinite(low) || high < Math.max(open, close) || low > Math.min(open, close) || high < low) {
+    return null;
+  }
+
+  const volume = finiteNumber(item.volume ?? item.v);
+  return {
+    timestamp: normalizeTimestamp(item.timestamp ?? item.time ?? item.t, fallbackTimestamp),
+    open,
+    high,
+    low,
+    close,
+    volume: volume === null ? undefined : volume,
+    timeframe,
+  };
+}
+
 // ── CSV Parser ────────────────────────────────────────────────────
 
 export function parseCSVCandles(csv: string, timeframe: string): ReplayCandle[] {
-  const lines = csv.trim().split('\n');
+  const lines = csv.replace(/^\uFEFF/, '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   if (lines.length < 2) return [];
 
-  const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const header = parseCsvLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
   const idxOf = (names: string[]) => names.map(n => header.indexOf(n)).find(i => i !== -1) ?? -1;
 
   const tsIdx    = idxOf(['timestamp', 'time', 'date', 'datetime', 'date_time']);
@@ -35,29 +112,19 @@ export function parseCSVCandles(csv: string, timeframe: string): ReplayCandle[] 
   const candles: ReplayCandle[] = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const cells = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+    const cells = parseCsvLine(lines[i]);
     if (cells.length < 3) continue;
 
-    let ts = Date.now();
-    if (tsIdx !== -1 && cells[tsIdx]) {
-      const raw = cells[tsIdx];
-      const parsed = !isNaN(Number(raw))
-        ? Number(raw) * (Number(raw) < 1e12 ? 1000 : 1) // unix seconds → ms
-        : new Date(raw).getTime();
-      if (!isNaN(parsed)) ts = parsed;
-    } else {
-      ts = Date.now() - (lines.length - i) * 60_000; // synthetic fallback
-    }
-
-    const o = parseFloat(cells[openIdx] ?? '0');
-    const h = highIdx !== -1 ? parseFloat(cells[highIdx]) : Math.max(o, parseFloat(cells[closeIdx] ?? '0'));
-    const l = lowIdx  !== -1 ? parseFloat(cells[lowIdx])  : Math.min(o, parseFloat(cells[closeIdx] ?? '0'));
-    const c = parseFloat(cells[closeIdx] ?? '0');
-    const v = volIdx  !== -1 ? parseFloat(cells[volIdx])  : undefined;
-
-    if (isNaN(o) || isNaN(c)) continue;
-
-    candles.push({ timestamp: ts, open: o, high: isNaN(h) ? Math.max(o, c) : h, low: isNaN(l) ? Math.min(o, c) : l, close: c, volume: isNaN(v!) ? undefined : v, timeframe });
+    const fallbackTimestamp = Date.now() - (lines.length - i) * 60_000;
+    const normalized = normalizeReplayCandle({
+      timestamp: tsIdx === -1 ? undefined : cells[tsIdx],
+      open: cells[openIdx],
+      high: highIdx === -1 ? undefined : cells[highIdx],
+      low: lowIdx === -1 ? undefined : cells[lowIdx],
+      close: cells[closeIdx],
+      volume: volIdx === -1 ? undefined : cells[volIdx],
+    } as unknown as Record<string, unknown>, timeframe, fallbackTimestamp);
+    if (normalized) candles.push(normalized);
   }
 
   return candles.sort((a, b) => a.timestamp - b.timestamp);
@@ -80,7 +147,7 @@ export const datasetService = {
     if (candles.length === 0) throw new Error('هیچ کندلی در فایل CSV یافت نشد');
     const now = Date.now();
     const ds: ReplayDataset = {
-      id: crypto.randomUUID(),
+      id: createId('dataset'),
       name,
       symbol,
       timeframe,
@@ -103,7 +170,7 @@ export const datasetService = {
     if (items.length === 0) throw new Error('حداقل یک تصویر لازم است');
     const now = Date.now();
     const ds: ReplayDataset = {
-      id: crypto.randomUUID(),
+      id: createId('dataset'),
       name,
       symbol,
       timeframe,
@@ -128,7 +195,7 @@ export const datasetService = {
     const now = Date.now();
     const screenshots = parseJSON<ReplayScreenshotItem[]>(trade.screenshots, []);
     const ds: ReplayDataset = {
-      id: crypto.randomUUID(),
+      id: createId('dataset'),
       name: `معامله ${trade.symbol} — ${new Date(trade.openedAt).toLocaleDateString('fa-IR')}`,
       symbol: trade.symbol,
       timeframe: '—',
@@ -152,11 +219,19 @@ export const datasetService = {
   },
 
   getCandles(ds: ReplayDataset): ReplayCandle[] {
-    return parseJSON<ReplayCandle[]>(ds.data, []);
+    const raw = parseJSON<unknown[]>(ds.data, []);
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((item, index) => item && typeof item === 'object'
+        ? normalizeReplayCandle(item as Record<string, unknown>, ds.timeframe, Date.now() - (raw.length - index) * 60_000)
+        : null)
+      .filter((candle): candle is ReplayCandle => candle !== null)
+      .sort((a, b) => a.timestamp - b.timestamp);
   },
 
   getScreenshots(ds: ReplayDataset): ReplayScreenshotItem[] {
-    return parseJSON<ReplayScreenshotItem[]>(ds.data, []);
+    const raw = parseJSON<unknown[]>(ds.data, []);
+    return Array.isArray(raw) ? raw.filter((item): item is ReplayScreenshotItem => Boolean(item && typeof item === 'object')) : [];
   },
 };
 
@@ -196,11 +271,13 @@ export const sessionService = {
 
     if (params.datasetId) {
       const ds = await db.replayDatasets.get(params.datasetId);
-      if (ds) {
-        totalSteps = ds.totalItems;
-        symbol = ds.symbol;
-        timeframe = ds.timeframe;
+      if (!ds) throw new Error('دیتاست ری‌پلی یافت نشد یا حذف شده است');
+      if (!Number.isInteger(ds.totalItems) || ds.totalItems <= 0) {
+        throw new Error('دیتاست ری‌پلی خالی یا ناقص است');
       }
+      totalSteps = ds.totalItems;
+      symbol = ds.symbol;
+      timeframe = ds.timeframe;
     }
 
     if (params.sourceTradeId) {
@@ -215,7 +292,7 @@ export const sessionService = {
 
     const now = Date.now();
     const session: ReplaySession = {
-      id: crypto.randomUUID(),
+      id: createId('session'),
       title: params.title,
       mode: params.mode,
       coachingMode: params.coachingMode,
@@ -289,11 +366,19 @@ export const sessionService = {
 
   async closeSimulatedPosition(sessionId: string, closePrice: number): Promise<void> {
     const session = await db.replaySessions.get(sessionId);
-    if (!session || !session.simulatedEntry || !session.simulatedSL) return;
+    if (
+      !session
+      || typeof session.simulatedEntry !== 'number'
+      || !Number.isFinite(session.simulatedEntry)
+      || typeof session.simulatedSL !== 'number'
+      || !Number.isFinite(session.simulatedSL)
+    ) return;
+    const simulatedEntry: number = session.simulatedEntry;
+    const simulatedSL: number = session.simulatedSL;
 
-    const priceDiff = closePrice - session.simulatedEntry;
+    const priceDiff = closePrice - simulatedEntry;
     const direction = session.simulatedDirection === 'long' ? 1 : -1;
-    const slDiff = Math.abs(session.simulatedEntry - session.simulatedSL);
+    const slDiff = Math.abs(simulatedEntry - simulatedSL);
     const rMultiple = slDiff > 0 ? (priceDiff * direction) / slDiff : 0;
 
     let result: ReplaySession['simulatedResult'] = 'breakeven';

@@ -24,6 +24,7 @@ import {
 } from '../services/marketContextService';
 import { defaultTFAnalysis, Trade } from '../db/database';
 import { db } from '../db/database';
+import StoredImage from '../components/StoredImage';
 import { extractFeaturesFromText } from '../services/visualAnalysisService';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -202,7 +203,14 @@ function TFAnalysisPanel({ tf, data, onChange }: {
       <div>
         {data.screenshot ? (
           <div className="relative rounded-lg overflow-hidden border border-border/40">
-            <img src={data.screenshot.dataUrl} alt={`${tf.label} chart`} className="w-full max-h-48 object-contain bg-black/20" />
+            <StoredImage
+              source={data.screenshot.dataUrl}
+              alt={`${tf.label} chart`}
+              enableViewer
+              showDownload
+              filename={`${tf.label}-chart`}
+              className="w-full max-h-48 object-contain bg-black/20"
+            />
             <div className="absolute top-2 right-2 flex gap-1">
               <span className={`text-[10px] px-1.5 py-0.5 rounded bg-background/80 font-medium ${tf.color}`}>{tf.label}</span>
             </div>
@@ -1175,7 +1183,14 @@ export default function MarketContextSessionPage() {
                                       <div className="flex gap-2 overflow-x-auto pb-1">
                                         {screenshots.slice(0, 4).map((s, si) => (
                                           <div key={si} className="shrink-0">
-                                            <img src={s.dataUrl} alt={s.label} className="h-16 w-24 object-cover rounded border border-border/40" />
+                                            <StoredImage
+                                              source={s.dataUrl}
+                                              alt={s.label}
+                                              enableViewer
+                                              showDownload
+                                              filename={s.label || 'historical-screenshot'}
+                                              className="h-16 w-24 object-cover rounded border border-border/40"
+                                            />
                                             <p className="text-[9px] text-center text-muted-foreground mt-0.5">{s.timeframe ?? s.label}</p>
                                           </div>
                                         ))}

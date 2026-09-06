@@ -143,6 +143,7 @@ export interface VisualSimilarityMatch {
   matchedFeatures: string[];
   label: string;
   dataUrl: string;
+  imageBlob: Blob | null;
   createdAt: number;
 }
 

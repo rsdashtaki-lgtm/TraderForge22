@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogTrigger } from './ui/dialog';
 import { Badge } from './ui/badge';
 import { Search, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { cn } from '../lib/utils';
+import StoredImage from './StoredImage';
 
 const RESULT_LABELS: Record<string, string> = {
   win: 'برد', loss: 'ضرر', breakeven: 'سر‌به‌سر',
@@ -101,8 +102,8 @@ export default function VisualSimilarityPanel({ matches, isLoading }: Props) {
                               hover:border-white/25 transition-all">
                 {/* Thumbnail */}
                 <div className="aspect-video relative overflow-hidden bg-black/20">
-                  <img
-                    src={m.dataUrl}
+                  <StoredImage
+                    source={m}
                     alt={m.label}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                   />
@@ -160,7 +161,14 @@ export default function VisualSimilarityPanel({ matches, isLoading }: Props) {
             {/* Full view */}
             <DialogContent className="max-w-3xl p-2 bg-transparent border-none shadow-none">
               <div className="rounded-xl overflow-hidden bg-black/90 border border-white/10">
-                <img src={m.dataUrl} alt={m.label} className="w-full h-auto max-h-[70vh] object-contain" />
+                <StoredImage
+                  source={m}
+                  alt={m.label}
+                  enableViewer
+                  showDownload
+                  filename={m.label || 'similar-trade-screenshot'}
+                  className="w-full h-auto max-h-[70vh] object-contain"
+                />
                 <div className="p-3 flex items-center gap-3">
                   <span className="font-medium">{m.symbol}</span>
                   {m.timeframe && <span className="text-muted-foreground text-sm">{m.timeframe}</span>}

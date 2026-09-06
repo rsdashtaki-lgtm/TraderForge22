@@ -1,7 +1,11 @@
 import JSZip from 'jszip';
-import { db, Trade, Strategy, Phase, Step, Rule, AnalysisSession, DailyJournal } from '../db/database';
+import { Capacitor } from '@capacitor/core';
+import { Directory, Filesystem } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
+import { db, Trade, Strategy, Phase, Step, Rule, AnalysisSession, DailyJournal, dataUrlToBlob } from '../db/database';
 import { securityService } from '../security/securityService';
 import { APP_VERSION, DB_VERSION, BACKUP_FORMAT_VERSION, SCHEMA_VERSION } from '../constants/version';
+import { getNetPnl } from '../lib/tradeHelpers';
 
 export { APP_VERSION, DB_VERSION, BACKUP_FORMAT_VERSION, SCHEMA_VERSION };
 
@@ -39,14 +43,28 @@ export interface BackupData {
     dailyJournals: DailyJournal[];
     settings: Record<string, string>;
     // فیلدهای اختیاری — ممکن است در نسخه‌های قدیمی‌تر وجود نداشته باشند
+    symbolProfiles?: unknown[];
+    learningAuditTrail?: unknown[];
+    profileSnapshots?: unknown[];
+    profileCorrections?: unknown[];
+    knowledgeCategories?: unknown[];
+    replayDatasets?: unknown[];
+    replayPlaylists?: unknown[];
+    marketContextSessions?: unknown[];
     tradeEvents?: unknown[];
     tradeVersions?: unknown[];
     chartScreenshots?: unknown[];
     riskViolations?: unknown[];
+    riskProfiles?: unknown[];
+    riskGroups?: unknown[];
     replaySessions?: unknown[];
     replayDecisions?: unknown[];
     knowledgeNotes?: unknown[];
-    liveTrades?: unknown[];
+    preTradeChecklists?: unknown[];
+    dailyFocus?: unknown[];
+    screenshotGroups?: unknown[];
+    visualPatterns?: unknown[];
+    screenshotCollections?: unknown[];
     accounts?: unknown[];
     tradingBoxes?: unknown[];
     performanceReviews?: unknown[];
@@ -82,8 +100,60 @@ export interface BackupHistoryItem {
 // ─────────────────────────────────────────────
 // ساخت payload داده
 // ─────────────────────────────────────────────
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('خواندن تصویر برای پشتیبان‌گیری انجام نشد'));
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function serializeChartScreenshots(records: unknown[]): Promise<unknown[]> {
+  return Promise.all(records.map(async (record: any) => {
+    if (!record || typeof record !== 'object') return record;
+    const imageBlob = record.imageBlob;
+    if (imageBlob instanceof Blob) {
+      try {
+        return {
+          ...record,
+          dataUrl: await blobToDataUrl(imageBlob),
+          imageBlob: null,
+        };
+      } catch {
+        return { ...record, imageBlob: null };
+      }
+    }
+    // JSON serialization of a Blob from an older exporter produces {}.
+    return { ...record, imageBlob: null };
+  }));
+}
+
+function restoreChartScreenshots(records: unknown[] | undefined): unknown[] {
+  return (records ?? []).map((record: any) => {
+    if (!record || typeof record !== 'object') return record;
+    if (record.imageBlob instanceof Blob) return record;
+    if (typeof record.dataUrl === 'string' && record.dataUrl.startsWith('data:')) {
+      try {
+        return { ...record, imageBlob: dataUrlToBlob(record.dataUrl), dataUrl: '' };
+      } catch {
+        return record;
+      }
+    }
+    return record;
+  });
+}
+
 async function buildBackupData() {
-  const [strategies, phases, steps, rules, analysisSessions, trades, dailyJournals] =
+  const [
+    strategies, phases, steps, rules, analysisSessions, trades, dailyJournals,
+    symbolProfiles, learningAuditTrail, profileSnapshots, profileCorrections,
+    knowledgeNotes, knowledgeCategories, replayDatasets, replaySessions,
+    replayDecisions, replayPlaylists, marketContextSessions, tradeEvents,
+    tradeVersions, riskProfiles, riskViolations, riskGroups, performanceReviews,
+    preTradeChecklists, dailyFocus, chartScreenshots, screenshotGroups,
+    visualPatterns, screenshotCollections, accounts, tradingBoxes,
+  ] =
     await Promise.all([
       db.strategies.toArray(),
       db.phases.toArray(),
@@ -92,15 +162,54 @@ async function buildBackupData() {
       db.analysisSessions.toArray(),
       db.trades.toArray(),
       db.dailyJournals.toArray(),
+      db.symbolProfiles.toArray(),
+      db.learningAuditTrail.toArray(),
+      db.profileSnapshots.toArray(),
+      db.profileCorrections.toArray(),
+      db.knowledgeNotes.toArray(),
+      db.knowledgeCategories.toArray(),
+      db.replayDatasets.toArray(),
+      db.replaySessions.toArray(),
+      db.replayDecisions.toArray(),
+      db.replayPlaylists.toArray(),
+      db.marketContextSessions.toArray(),
+      db.tradeEvents.toArray(),
+      db.tradeVersions.toArray(),
+      db.riskProfiles.toArray(),
+      db.riskViolations.toArray(),
+      db.riskGroups.toArray(),
+      db.performanceReviews.toArray(),
+      db.preTradeChecklists.toArray(),
+      db.dailyFocus.toArray(),
+      db.chartScreenshots.toArray(),
+      db.screenshotGroups.toArray(),
+      db.visualPatterns.toArray(),
+      db.screenshotCollections.toArray(),
+      db.accounts.toArray(),
+      db.tradingBoxes.toArray(),
     ]);
+  const serializedChartScreenshots = await serializeChartScreenshots(chartScreenshots);
 
   const settings = backupService.exportSettings();
-  const totalRecords =
-    strategies.length + phases.length + steps.length + rules.length +
-    analysisSessions.length + trades.length + dailyJournals.length;
+  const allRecords = [
+    strategies, phases, steps, rules, analysisSessions, trades, dailyJournals,
+    symbolProfiles, learningAuditTrail, profileSnapshots, profileCorrections,
+    knowledgeNotes, knowledgeCategories, replayDatasets, replaySessions,
+    replayDecisions, replayPlaylists, marketContextSessions, tradeEvents,
+    tradeVersions, riskProfiles, riskViolations, riskGroups, performanceReviews,
+    preTradeChecklists, dailyFocus, serializedChartScreenshots, screenshotGroups,
+    visualPatterns, screenshotCollections, accounts, tradingBoxes,
+  ];
+  const totalRecords = allRecords.reduce((sum, records) => sum + records.length, 0);
 
   const data: BackupData['data'] = {
     strategies, phases, steps, rules, analysisSessions, trades, dailyJournals, settings,
+    symbolProfiles, learningAuditTrail, profileSnapshots, profileCorrections,
+    knowledgeNotes, knowledgeCategories, replayDatasets, replaySessions,
+    replayDecisions, replayPlaylists, marketContextSessions, tradeEvents,
+    tradeVersions, riskProfiles, riskViolations, riskGroups, performanceReviews,
+    preTradeChecklists, dailyFocus, chartScreenshots: serializedChartScreenshots, screenshotGroups,
+    visualPatterns, screenshotCollections, accounts, tradingBoxes,
   };
 
   // محاسبه Checksum برای بررسی یکپارچگی
@@ -157,14 +266,7 @@ async function buildAndDownloadZip(
     compressionOptions: { level: 6 },
   });
 
-  const url = URL.createObjectURL(zipBlob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await deliverFile(zipBlob, filename);
 
   return zipBlob.size;
 }
@@ -204,16 +306,81 @@ async function buildAndDownloadGz(
   for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.length; }
 
   const gzBlob = new Blob([merged], { type: 'application/gzip' });
-  const url = URL.createObjectURL(gzBlob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await deliverFile(gzBlob, filename);
 
   return gzBlob.size;
+}
+
+/**
+ * در Android WebView، کلیک روی لینک Blob ممکن است فایل را در مسیر نامعلوم
+ * بفرستد یا اصلاً دانلود را کامل نکند. Web Share فایل را به پنجره استاندارد
+ * Android می‌دهد تا کاربر بتواند Files/Downloads/Drive را خودش انتخاب کند.
+ * در دسکتاپ و مرورگرهای بدون Web Share، دانلود معمولی با زمان کافی برای
+ * خواندن Blob انجام می‌شود.
+ */
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function deliverFile(blob: Blob, filename: string): Promise<void> {
+  const isAndroidNative = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+  if (isAndroidNative) {
+    const path = `TraderMind/Backups/${filename}`;
+    const base64 = await blobToBase64(blob);
+    await Filesystem.writeFile({
+      path,
+      directory: Directory.Documents,
+      data: base64,
+      recursive: true,
+    });
+    const { uri } = await Filesystem.getUri({ path, directory: Directory.Documents });
+    // The file is already saved before opening Share. If the user closes the
+    // share sheet, the backup remains in Documents/TraderMind/Backups.
+    try {
+      await Share.share({
+        title: 'پشتیبان TraderMind',
+        text: `فایل در Documents/TraderMind/Backups ذخیره شد. در صورت نیاز آن را با Files یا Downloads به محل دیگری منتقل کنید.`,
+        files: [uri],
+        dialogTitle: 'ذخیره یا ارسال نسخه پشتیبان',
+      });
+    } catch {
+      // Cancelling the share sheet must not turn a successfully saved backup
+      // into an error.
+    }
+    return;
+  }
+
+  const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+  const canShareFile = typeof navigator !== 'undefined'
+    && typeof navigator.share === 'function'
+    && typeof navigator.canShare === 'function'
+    && navigator.canShare({ files: [file] });
+
+  if (canShareFile) {
+    await navigator.share({
+      title: 'پشتیبان TraderMind',
+      text: `فایل ${filename} را در پوشه دلخواه ذخیره کنید.`,
+      files: [file],
+    });
+    return;
+  }
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  // revoke فوری روی بعضی گوشی‌ها دانلود را قبل از شروع قطع می‌کند.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
 /** decompress یک فایل .gz و برگرداندن JSON string */
@@ -242,6 +409,188 @@ async function decompressGz(file: File): Promise<string> {
   for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.length; }
 
   return new TextDecoder().decode(merged);
+}
+
+// ─────────────────────────────────────────────
+// ساخت Spreadsheet واقعی (.xlsx) بدون وابستگی سنگین
+// ─────────────────────────────────────────────
+type SpreadsheetValue = string | number | boolean | null | undefined;
+type SpreadsheetSheet = { name: string; rows: SpreadsheetValue[][] };
+type SpreadsheetImage = { row: number; bytes: Uint8Array; mime: string };
+
+function xmlEscape(value: unknown): string {
+  return String(value ?? '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
+}
+
+function excelColumn(index: number): string {
+  let result = '';
+  let n = index + 1;
+  while (n > 0) {
+    const remainder = (n - 1) % 26;
+    result = String.fromCharCode(65 + remainder) + result;
+    n = Math.floor((n - 1) / 26);
+  }
+  return result;
+}
+
+function spreadsheetCell(value: SpreadsheetValue, column: number, row: number): string {
+  const ref = `${excelColumn(column)}${row}`;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return `<c r="${ref}"><v>${value}</v></c>`;
+  }
+  if (typeof value === 'boolean') {
+    return `<c r="${ref}" t="b"><v>${value ? 1 : 0}</v></c>`;
+  }
+  return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(value)}</t></is></c>`;
+}
+
+function spreadsheetSheetXml(rows: SpreadsheetValue[][], drawingId?: number): string {
+  const columnCount = Math.max(1, ...rows.map(row => row.length));
+  const lastRow = Math.max(1, rows.length);
+  const dimension = `A1:${excelColumn(columnCount - 1)}${lastRow}`;
+  const columns = Array.from({ length: columnCount }, (_, index) =>
+    `<col min="${index + 1}" max="${index + 1}" width="${index === 0 ? 24 : 18}" customWidth="1"/>`
+  ).join('');
+  const sheetData = rows.map((row, rowIndex) =>
+    `<row r="${rowIndex + 1}">${row.map((value, columnIndex) => spreadsheetCell(value, columnIndex, rowIndex + 1)).join('')}</row>`
+  ).join('');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <dimension ref="${dimension}"/>
+  <sheetViews><sheetView workbookViewId="0" rightToLeft="1"/></sheetViews>
+  <cols>${columns}</cols>
+  <sheetData>${sheetData}</sheetData>
+  ${drawingId ? `<drawing r:id="rId1"/>` : ''}
+</worksheet>`;
+}
+
+function dataUrlBytes(dataUrl: string): { bytes: Uint8Array; mime: string } | null {
+  const match = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
+  if (!match) return null;
+  try {
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return { bytes, mime: match[1] };
+  } catch {
+    return null;
+  }
+}
+
+function imageExtension(mime: string): string {
+  if (mime === 'image/jpeg' || mime === 'image/jpg') return 'jpg';
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/gif') return 'gif';
+  return mime.split('/')[1] || 'bin';
+}
+
+export async function buildSpreadsheetWorkbook(
+  sheets: SpreadsheetSheet[],
+  images: SpreadsheetImage[],
+): Promise<Blob> {
+  const zip = new JSZip();
+  const imageSheetIndex = sheets.findIndex(sheet => sheet.name === 'اسکرین‌شات‌ها');
+  const imageEntries = images.map((image, index) => ({
+    ...image,
+    index: index + 1,
+    ext: imageExtension(image.mime),
+  }));
+
+  const sheetOverrides: string[] = [];
+  const workbookSheets: string[] = [];
+  const workbookRelations: string[] = [
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>',
+  ];
+
+  sheets.forEach((sheet, index) => {
+    const sheetNumber = index + 1;
+    const hasImages = index === imageSheetIndex && imageEntries.length > 0;
+    zip.file(`xl/worksheets/sheet${sheetNumber}.xml`, spreadsheetSheetXml(sheet.rows, hasImages ? 1 : undefined));
+    sheetOverrides.push(`<Override PartName="/xl/worksheets/sheet${sheetNumber}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`);
+    workbookSheets.push(`<sheet name="${xmlEscape(sheet.name)}" sheetId="${sheetNumber}" r:id="rId${sheetNumber + 1}"/>`);
+    workbookRelations.push(`<Relationship Id="rId${sheetNumber + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${sheetNumber}.xml"/>`);
+
+    if (hasImages) {
+      zip.file(`xl/worksheets/_rels/sheet${sheetNumber}.xml.rels`,
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${sheetNumber}.xml"/>
+</Relationships>`);
+      zip.file(`xl/drawings/drawing${sheetNumber}.xml`,
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+${imageEntries.map((image, imageIndex) => `<xdr:twoCellAnchor editAs="oneCell">
+  <xdr:from><xdr:col>4</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${Math.max(1, image.row - 1)}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
+  <xdr:to><xdr:col>8</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${Math.max(5, image.row + 4)}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+  <xdr:pic>
+    <xdr:nvPicPr><xdr:cNvPr id="${imageIndex + 1}" name="Screenshot ${imageIndex + 1}"/><xdr:cNvPicPr/></xdr:nvPicPr>
+    <xdr:blipFill><a:blip r:embed="rId${imageIndex + 1}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>
+    <xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>
+  </xdr:pic>
+  <xdr:clientData/>
+</xdr:twoCellAnchor>`).join('\n')}
+</xdr:wsDr>`);
+      zip.file(`xl/drawings/_rels/drawing${sheetNumber}.xml.rels`,
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${imageEntries.map(image => `<Relationship Id="rId${image.index}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${image.index}.${image.ext}"/>`).join('\n')}
+</Relationships>`);
+      imageEntries.forEach(image => zip.file(`xl/media/image${image.index}.${image.ext}`, image.bytes));
+    }
+  });
+
+  zip.file('[Content_Types].xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  ${[...new Set(imageEntries.map(image => `<Default Extension="${image.ext}" ContentType="${xmlEscape(image.mime)}"/>`))].join('\n')}
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+  ${sheetOverrides.join('\n')}
+  ${imageSheetIndex >= 0 && imageEntries.length ? `<Override PartName="/xl/drawings/drawing${imageSheetIndex + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>` : ''}
+</Types>`);
+  zip.file('_rels/.rels',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`);
+  zip.file('xl/workbook.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <workbookPr codeName="ThisWorkbook"/>
+  <sheets>${workbookSheets.join('')}</sheets>
+</workbook>`);
+  zip.file('xl/_rels/workbook.xml.rels',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${workbookRelations.join('')}</Relationships>`);
+  zip.file('xl/styles.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="1"><font><sz val="11"/><name val="Arial"/></font></fonts>
+  <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+</styleSheet>`);
+  const workbookBytes = await zip.generateAsync({
+    type: 'uint8array',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
+  const workbookBuffer = workbookBytes.buffer.slice(
+    workbookBytes.byteOffset,
+    workbookBytes.byteOffset + workbookBytes.byteLength,
+  ) as ArrayBuffer;
+  return new Blob([workbookBuffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -302,14 +651,7 @@ export const backupService = {
     const timeStr = now.toTimeString().slice(0, 5).replace(':', '-');
     const filename = `TraderMind_Backup_Encrypted_${dateStr}_${timeStr}.zip`;
 
-    const url = URL.createObjectURL(zipBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    await deliverFile(zipBlob, filename);
 
     localStorage.setItem(STORAGE_KEY_LAST, new Date().toISOString());
     this.addToHistory({
@@ -372,6 +714,8 @@ export const backupService = {
     const settings: Record<string, string> = {};
     const val = localStorage.getItem(STORAGE_KEY_APP);
     if (val) settings[STORAGE_KEY_APP] = val;
+    const customSymbols = localStorage.getItem('tradermind-custom-symbols');
+    if (customSymbols) settings['tradermind-custom-symbols'] = customSymbols;
     return settings;
   },
 
@@ -614,14 +958,18 @@ export const backupService = {
    * اگر هر مرحله‌ای fail شود، Dexie کل عملیات را rollback می‌کند و DB سالم می‌ماند.
    */
   async importReplace(data: BackupData['data']): Promise<void> {
+    const restoredChartScreenshots = restoreChartScreenshots(data.chartScreenshots);
     // همه جداول موجود در backup را در یک transaction restore می‌کنیم
     const tables = [
       db.strategies, db.phases, db.steps, db.rules,
       db.analysisSessions, db.trades, db.dailyJournals,
+      db.symbolProfiles, db.learningAuditTrail, db.profileSnapshots, db.profileCorrections,
+      db.knowledgeNotes, db.knowledgeCategories, db.replayDatasets, db.replaySessions,
+      db.replayDecisions, db.replayPlaylists, db.marketContextSessions,
       db.tradeEvents, db.tradeVersions, db.chartScreenshots,
-      db.riskViolations, db.replaySessions, db.replayDecisions,
-      db.knowledgeNotes, db.accounts, db.tradingBoxes,
-      db.performanceReviews,
+      db.riskProfiles, db.riskViolations, db.riskGroups, db.accounts,
+      db.tradingBoxes, db.performanceReviews, db.preTradeChecklists, db.dailyFocus,
+      db.screenshotGroups, db.visualPatterns, db.screenshotCollections,
     ];
 
     await db.transaction('rw', tables, async () => {
@@ -638,16 +986,31 @@ export const backupService = {
       if (data.dailyJournals?.length)   await db.dailyJournals.bulkAdd(data.dailyJournals as DailyJournal[]);
 
       // ── جداول اضافی (اختیاری — ممکن است در backup قدیمی نباشند) ──
+      if (data.symbolProfiles?.length)      await db.symbolProfiles.bulkAdd(data.symbolProfiles as any[]);
+      if (data.learningAuditTrail?.length)  await db.learningAuditTrail.bulkAdd(data.learningAuditTrail as any[]);
+      if (data.profileSnapshots?.length)    await db.profileSnapshots.bulkAdd(data.profileSnapshots as any[]);
+      if (data.profileCorrections?.length)  await db.profileCorrections.bulkAdd(data.profileCorrections as any[]);
+      if (data.knowledgeCategories?.length) await db.knowledgeCategories.bulkAdd(data.knowledgeCategories as any[]);
+      if (data.replayDatasets?.length)      await db.replayDatasets.bulkAdd(data.replayDatasets as any[]);
+      if (data.replayPlaylists?.length)     await db.replayPlaylists.bulkAdd(data.replayPlaylists as any[]);
+      if (data.marketContextSessions?.length) await db.marketContextSessions.bulkAdd(data.marketContextSessions as any[]);
       if (data.tradeEvents?.length)       await db.tradeEvents.bulkAdd(data.tradeEvents as any[]);
       if (data.tradeVersions?.length)     await db.tradeVersions.bulkAdd(data.tradeVersions as any[]);
-      if (data.chartScreenshots?.length)  await db.chartScreenshots.bulkAdd(data.chartScreenshots as any[]);
+       if (restoredChartScreenshots.length) await db.chartScreenshots.bulkAdd(restoredChartScreenshots as any[]);
+      if (data.riskProfiles?.length)     await db.riskProfiles.bulkAdd(data.riskProfiles as any[]);
       if (data.riskViolations?.length)    await db.riskViolations.bulkAdd(data.riskViolations as any[]);
+      if (data.riskGroups?.length)        await db.riskGroups.bulkAdd(data.riskGroups as any[]);
       if (data.replaySessions?.length)    await db.replaySessions.bulkAdd(data.replaySessions as any[]);
       if (data.replayDecisions?.length)   await db.replayDecisions.bulkAdd(data.replayDecisions as any[]);
       if (data.knowledgeNotes?.length)    await db.knowledgeNotes.bulkAdd(data.knowledgeNotes as any[]);
+      if (data.preTradeChecklists?.length) await db.preTradeChecklists.bulkAdd(data.preTradeChecklists as any[]);
+      if (data.dailyFocus?.length)         await db.dailyFocus.bulkAdd(data.dailyFocus as any[]);
       if (data.accounts?.length)          await db.accounts.bulkAdd(data.accounts as any[]);
       if (data.tradingBoxes?.length)      await db.tradingBoxes.bulkAdd(data.tradingBoxes as any[]);
       if (data.performanceReviews?.length) await db.performanceReviews.bulkAdd(data.performanceReviews as any[]);
+      if (data.screenshotGroups?.length) await db.screenshotGroups.bulkAdd(data.screenshotGroups as any[]);
+      if (data.visualPatterns?.length) await db.visualPatterns.bulkAdd(data.visualPatterns as any[]);
+      if (data.screenshotCollections?.length) await db.screenshotCollections.bulkAdd(data.screenshotCollections as any[]);
     });
 
     // Settings در localStorage ذخیره می‌شود — خارج از IndexedDB transaction (قابل قبول)
@@ -657,6 +1020,7 @@ export const backupService = {
   // ────────── ادغام (Keep Newest) ──────────
   async importMerge(data: BackupData['data']): Promise<MergeStats> {
     const stats: MergeStats = { added: 0, updated: 0, skipped: 0 };
+    const restoredChartScreenshots = restoreChartScreenshots(data.chartScreenshots);
 
     const mergeTable = async (table: any, items: any[]) => {
       for (const item of items) {
@@ -686,22 +1050,45 @@ export const backupService = {
     await mergeTable(db.trades, data.trades || []);
     await mergeTable(db.dailyJournals, data.dailyJournals || []);
 
+    const extendedTables: Array<[any, unknown[] | undefined]> = [
+      [db.symbolProfiles, data.symbolProfiles], [db.learningAuditTrail, data.learningAuditTrail],
+      [db.profileSnapshots, data.profileSnapshots], [db.profileCorrections, data.profileCorrections],
+      [db.knowledgeNotes, data.knowledgeNotes], [db.knowledgeCategories, data.knowledgeCategories],
+      [db.replayDatasets, data.replayDatasets], [db.replaySessions, data.replaySessions],
+      [db.replayDecisions, data.replayDecisions], [db.replayPlaylists, data.replayPlaylists],
+      [db.marketContextSessions, data.marketContextSessions], [db.tradeEvents, data.tradeEvents],
+      [db.tradeVersions, data.tradeVersions], [db.chartScreenshots, restoredChartScreenshots],
+      [db.riskProfiles, data.riskProfiles], [db.riskViolations, data.riskViolations],
+      [db.riskGroups, data.riskGroups], [db.performanceReviews, data.performanceReviews],
+      [db.preTradeChecklists, data.preTradeChecklists], [db.dailyFocus, data.dailyFocus],
+      [db.screenshotGroups, data.screenshotGroups], [db.visualPatterns, data.visualPatterns],
+      [db.screenshotCollections, data.screenshotCollections], [db.accounts, data.accounts],
+      [db.tradingBoxes, data.tradingBoxes],
+    ];
+    for (const [table, items] of extendedTables) {
+      if (items?.length) await mergeTable(table, items);
+    }
+    if (data.settings) this.importSettings(data.settings);
+
     return stats;
   },
 
   // ────────── پاک کردن همه داده‌ها ──────────
   async resetAll(): Promise<void> {
-    await db.transaction('rw',
-      [db.strategies, db.phases, db.steps, db.rules,
-       db.analysisSessions, db.trades, db.dailyJournals],
-      async () => {
-        await Promise.all([
-          db.strategies.clear(), db.phases.clear(), db.steps.clear(),
-          db.rules.clear(), db.analysisSessions.clear(),
-          db.trades.clear(), db.dailyJournals.clear(),
-        ]);
-      }
-    );
+    const tables = [
+      db.strategies, db.phases, db.steps, db.rules, db.analysisSessions, db.trades, db.dailyJournals,
+      db.symbolProfiles, db.learningAuditTrail, db.profileSnapshots, db.profileCorrections,
+      db.knowledgeNotes, db.knowledgeCategories, db.replayDatasets, db.replaySessions,
+      db.replayDecisions, db.replayPlaylists, db.marketContextSessions, db.tradeEvents,
+      db.tradeVersions, db.chartScreenshots, db.riskProfiles, db.riskViolations, db.riskGroups,
+      db.accounts, db.tradingBoxes, db.performanceReviews, db.preTradeChecklists, db.dailyFocus,
+      db.screenshotGroups, db.visualPatterns, db.screenshotCollections,
+    ];
+    await db.transaction('rw', tables, async () => {
+      await Promise.all(tables.map(table => table.clear()));
+    });
+    localStorage.removeItem(STORAGE_KEY_APP);
+    localStorage.removeItem('tradermind-custom-symbols');
   },
 
   // ────────── تاریخچه ──────────
@@ -722,44 +1109,98 @@ export const backupService = {
     localStorage.removeItem(STORAGE_KEY_HISTORY);
   },
 
-  // ────────── خروجی Excel ──────────
+  // ────────── خروجی Spreadsheet چندبرگه ──────────
   async exportToExcel(): Promise<void> {
-    const trades = await db.trades.toArray();
+    const [trades, accounts, tradingBoxes, analysisSessions, dailyJournals, chartScreenshots] =
+      await Promise.all([
+        db.trades.toArray(),
+        db.accounts.toArray(),
+        db.tradingBoxes.toArray(),
+        db.analysisSessions.toArray(),
+        db.dailyJournals.toArray(),
+        db.chartScreenshots.toArray(),
+      ]);
 
-    const rows = trades.map(t => ({
-      تاریخ: t.openedAt ? new Date(t.openedAt).toLocaleDateString('fa-IR') : '',
-      نماد: t.symbol,
-      جهت: t.direction === 'long' ? 'خرید (Long)' : 'فروش (Short)',
-      وضعیت: t.status,
-      نتیجه: t.result,
-      'سود/زیان (R)': t.rMultiple ?? '',
-      'سود/زیان ($)': t.profitLoss ?? '',
-      'نسبت R/R برنامه‌ریزی‌شده': t.plannedRR ?? '',
-      'حجم موقعیت': t.positionSize ?? '',
-      'ریسک %': t.riskPercentage ?? '',
-      'قیمت ورود': t.entryPrice,
-      'قیمت خروج': t.exitPrice ?? '',
-      'حد ضرر': t.stopLoss,
-      'هدف سود': t.takeProfit ?? '',
-      'جلسه معاملاتی': t.tradingSession ?? '',
-      ست‌آپ: t.setupType ?? '',
-      'دلیل ورود': t.entryReason ?? '',
-      'دلیل خروج': t.reasonForExit ?? '',
-      یادداشت: t.notes ?? '',
-      'درس‌آموخته': t.lesson ?? '',
-    }));
+    const dateValue = (value: unknown): SpreadsheetValue => {
+      if (typeof value !== 'number' || !value) return '';
+      return new Date(value).toISOString();
+    };
+    const jsonText = (value: unknown): SpreadsheetValue => {
+      if (value == null || value === '') return '';
+      try {
+        const parsed = JSON.parse(String(value));
+        return Array.isArray(parsed) ? parsed.join('، ') : typeof parsed === 'object' ? JSON.stringify(parsed) : String(parsed);
+      } catch {
+        return String(value);
+      }
+    };
 
-    const XLSX = await import('xlsx');
-    const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{}]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'معاملات');
+    const tradeRows: SpreadsheetValue[][] = [
+      ['شناسه', 'تاریخ بازشدن', 'تاریخ بسته‌شدن', 'نماد', 'جهت', 'وضعیت', 'نتیجه', 'سود/زیان خالص', 'سود/زیان خام', 'R', 'RR برنامه‌ریزی‌شده', 'حجم', 'ریسک٪', 'قیمت ورود', 'قیمت خروج', 'حد ضرر', 'هدف سود', 'جلسه', 'ستاپ', 'دلیل ورود', 'دلیل خروج', 'سایر هزینه‌ها', 'کمیسیون', 'اسپرد', 'احساسات', 'برچسب‌ها', 'یادداشت', 'درس‌آموخته'],
+      ...trades.map(t => [
+        t.id, dateValue(t.openedAt), dateValue(t.closedAt), t.symbol,
+        t.direction === 'long' ? 'خرید (Long)' : 'فروش (Short)', t.status, t.result,
+        getNetPnl(t), t.profitLoss, t.rMultiple, t.plannedRR, t.positionSize,
+        t.riskPercentage, t.entryPrice, t.exitPrice, t.stopLoss, t.takeProfit,
+        t.tradingSession, t.setupType, t.entryReason, t.reasonForExit, t.fees,
+        t.commission, t.spread, jsonText(t.emotions), jsonText(t.tags), t.notes, t.lesson,
+      ]),
+    ];
+    const accountRows: SpreadsheetValue[][] = [
+      ['شناسه', 'نام حساب', 'بروکر', 'ارز', 'موجودی اولیه', 'موجودی فعلی', 'پیش‌فرض', 'یادداشت'],
+      ...accounts.map(account => [account.id, account.name, account.broker, account.currency, account.initialBalance, account.currentBalance, account.isDefault, account.notes]),
+    ];
+    const boxRows: SpreadsheetValue[][] = [
+      ['شناسه', 'نام باکس', 'حساب مرتبط', 'وضعیت', 'هدف معاملات', 'توضیحات', 'یادداشت'],
+      ...tradingBoxes.map(box => [box.id, box.name, box.accountId ?? 'مشترک', box.status, box.targetTradeCount, box.description, box.notes]),
+    ];
+    const analysisRows: SpreadsheetValue[][] = [
+      ['شناسه', 'عنوان', 'وضعیت', 'شروع', 'پایان', 'شناسه استراتژی', 'شناسه معامله', 'تصمیم نهایی', 'یادداشت'],
+      ...analysisSessions.map(session => [session.id, session.title, session.status, dateValue(session.startedAt), dateValue(session.completedAt), session.strategyId, session.tradeId, session.finalDecision, session.notes]),
+    ];
+    const journalRows: SpreadsheetValue[][] = [
+      ['شناسه', 'تاریخ', 'عنوان/خلاصه', 'یادداشت', 'ایجادشده'],
+      ...dailyJournals.map((journal: any) => [journal.id, journal.date ?? '', journal.title ?? journal.summary ?? '', journal.notes ?? journal.content ?? '', dateValue(journal.createdAt)]),
+    ];
 
-    // عرض ستون‌ها
-    if (rows.length) {
-      ws['!cols'] = Object.keys(rows[0]).map(() => ({ wch: 18 }));
+    const screenshotRows: SpreadsheetValue[][] = [
+      ['شناسه', 'معامله مرتبط', 'نماد', 'تایم‌فریم', 'نوع', 'برچسب', 'یادداشت', 'شماره تصویر'],
+    ];
+    const images: SpreadsheetImage[] = [];
+    for (const screenshot of chartScreenshots as any[]) {
+      let image: { bytes: Uint8Array; mime: string } | null = null;
+      if (screenshot.imageBlob instanceof Blob) {
+        image = { bytes: new Uint8Array(await screenshot.imageBlob.arrayBuffer()), mime: screenshot.imageBlob.type || 'image/png' };
+      } else if (typeof screenshot.dataUrl === 'string') {
+        image = dataUrlBytes(screenshot.dataUrl);
+      }
+      const imageNumber = image ? images.length + 1 : '';
+      screenshotRows.push([screenshot.id, screenshot.tradeId, screenshot.symbol, screenshot.timeframe, screenshot.screenshotType, screenshot.label, screenshot.notes, imageNumber]);
+      if (image) images.push({ ...image, row: screenshotRows.length });
+    }
+    // تصاویر قدیمی که هنوز داخل فیلد screenshots معامله هستند نیز export می‌شوند.
+    for (const trade of trades) {
+      try {
+        const embedded = JSON.parse(trade.screenshots || '[]') as Array<{ dataUrl?: string; label?: string }>;
+        for (const screenshot of embedded) {
+          const image = typeof screenshot.dataUrl === 'string' ? dataUrlBytes(screenshot.dataUrl) : null;
+          if (!image) continue;
+          const imageNumber = images.length + 1;
+          screenshotRows.push([`trade-${trade.id}-${imageNumber}`, trade.id, trade.symbol, '', 'trade', screenshot.label ?? '', '', imageNumber]);
+          images.push({ ...image, row: screenshotRows.length });
+        }
+      } catch { /* تصویر قدیمی خراب است؛ داده‌های اصلی همچنان export می‌شوند */ }
     }
 
-    const filename = `tradermind_trades_${new Date().toISOString().slice(0, 10)}.xlsx`;
-    XLSX.writeFile(wb, filename);
+    const workbook = await buildSpreadsheetWorkbook([
+      { name: 'معاملات', rows: tradeRows },
+      { name: 'حساب‌ها', rows: accountRows },
+      { name: 'باکس‌ها', rows: boxRows },
+      { name: 'تحلیل‌ها', rows: analysisRows },
+      { name: 'ژورنال‌ها', rows: journalRows },
+      { name: 'اسکرین‌شات‌ها', rows: screenshotRows },
+    ], images);
+    const filename = `tradermind_spreadsheet_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    await deliverFile(workbook, filename);
   },
 };

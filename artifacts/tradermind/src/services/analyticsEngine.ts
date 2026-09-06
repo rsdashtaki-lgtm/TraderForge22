@@ -25,6 +25,7 @@ import {
 import { computeAnalytics, filterTradesByRange, TimeRangeKey, AnalyticsData } from './analyticsService';
 import { isWin, isLoss, isClosed } from '../lib/tradeHelpers';
 import { computeTraderProfile } from './traderProfileService';
+import { getTradingDateKey } from '../lib/tradingTime';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -151,9 +152,9 @@ export async function computeFullAnalytics(
 
   // متا
   const sorted = [...closedTrades].sort((a, b) => a.openedAt - b.openedAt);
-  const tradingDays = new Set(closedTrades.map(t => new Date(t.openedAt).toISOString().slice(0, 10))).size;
+  const tradingDays = new Set(closedTrades.map(t => getTradingDateKey(t.openedAt))).size;
   const journaledDates = new Set(journals.map(j => j.date));
-  const journaledDays = [...new Set(closedTrades.map(t => new Date(t.openedAt).toISOString().slice(0, 10)))]
+  const journaledDays = [...new Set(closedTrades.map(t => getTradingDateKey(t.openedAt)))]
     .filter(d => journaledDates.has(d)).length;
   const reviewedCount = closedTrades.filter(t => {
     try { const r = JSON.parse(t.postTradeReview); return r?.completedAt > 0; } catch { return false; }

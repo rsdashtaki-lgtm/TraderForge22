@@ -3,7 +3,13 @@
  * تمام توابع pure هستند و قابل Unit Test.
  */
 import { Trade, DailyJournal, Strategy } from '../db/database';
-import { isWin, isLoss, isClosed, toDateStr } from '../lib/tradeHelpers';
+import { isWin, isLoss, isClosed, toDateStr, getNetPnl } from '../lib/tradeHelpers';
+import {
+  getTradingDateParts,
+  getTradingDayStart,
+  getTradingMonthStart,
+  getTradingTimestampForParts,
+} from '../lib/tradingTime';
 
 // ================================================================
 // Types
@@ -144,7 +150,7 @@ function calcAvgR(trades: Trade[]): number | null {
 }
 
 function calcTotalPnl(trades: Trade[]): number {
-  return trades.reduce((s, t) => s + (t.profitLoss || 0), 0);
+  return trades.reduce((s, t) => s + (getNetPnl(t) ?? 0), 0);
 }
 
 function parseEmotions(json: string): string[] {
@@ -166,26 +172,27 @@ function makeDailyStateGroup(ts: Trade[]): DailyStateGroup {
 // ================================================================
 
 export function getDateRange(key: Exclude<TimeRangeKey, 'custom'>): { from: number; to: number } {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const to = now.getTime();
+  const now = Date.now();
+  const parts = getTradingDateParts(now);
+  const todayStart = getTradingDayStart(now);
+  const to = now;
 
   switch (key) {
     case 'today':
-      return { from: today.getTime(), to };
+      return { from: todayStart, to };
     case 'week': {
-      const d = today.getDay(); // 0=Sun,6=Sat
-      const sincesat = d === 6 ? 0 : d + 1;
-      const sat = new Date(today);
-      sat.setDate(today.getDate() - sincesat);
-      return { from: sat.getTime(), to };
+      const sinceSaturday = parts.dayOfWeek === 6 ? 0 : parts.dayOfWeek + 1;
+      return { from: todayStart - sinceSaturday * 86_400_000, to };
     }
     case 'month':
-      return { from: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), to };
+      return { from: getTradingMonthStart(now), to };
     case '3months':
-      return { from: new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()).getTime(), to };
+      return {
+        from: getTradingTimestampForParts(parts.year, parts.month - 3, parts.day),
+        to,
+      };
     case 'year':
-      return { from: new Date(now.getFullYear(), 0, 1).getTime(), to };
+      return { from: getTradingTimestampForParts(parts.year, 0, 1), to };
     default:
       return { from: 0, to };
   }
@@ -206,7 +213,7 @@ export function computeAnalytics(
 ): AnalyticsData {
   const strategyMap = new Map<string, string>(strategies.map(s => [s.id, s.name]));
   const closed = trades.filter(isClosed);
-  const pnlValues = closed.map(t => t.profitLoss || 0);
+  const pnlValues = closed.map(t => getNetPnl(t) ?? 0);
 
   // ---- Summary ----
   const summary: TradeSummary = {
@@ -230,8 +237,9 @@ export function computeAnalytics(
   const chrono = [...closed].sort((a, b) => (a.closedAt || a.openedAt) - (b.closedAt || b.openedAt));
   let cum = 0;
   const pnlCurve: PnlPoint[] = chrono.map((t, i) => {
-    cum += t.profitLoss || 0;
-    return { index: i + 1, symbol: t.symbol, pnl: +(t.profitLoss || 0).toFixed(2), cumulative: +cum.toFixed(2) };
+    const pnl = getNetPnl(t) ?? 0;
+    cum += pnl;
+    return { index: i + 1, symbol: t.symbol, pnl: +pnl.toFixed(2), cumulative: +cum.toFixed(2) };
   });
 
   // ---- Strategy Performance ----
@@ -261,7 +269,7 @@ export function computeAnalytics(
 
   // ---- Day of Week ----
   const dayGroups: Map<number, Trade[]> = new Map(Array.from({ length: 7 }, (_, i) => [i, []]));
-  trades.forEach(t => dayGroups.get(new Date(t.openedAt).getDay())!.push(t));
+  trades.forEach(t => dayGroups.get(getTradingDateParts(t.openedAt).dayOfWeek)!.push(t));
   const dayOfWeekPerf: DayOfWeekPerf[] = WEEK_ORDER
     .map(day => {
       const ts = dayGroups.get(day) || [];
@@ -337,7 +345,7 @@ export function computeAnalytics(
   ];
   const slotGroups: Map<number, Trade[]> = new Map(TIME_SLOTS.map(s => [s.start, []]));
   trades.forEach(t => {
-    const h = new Date(t.openedAt).getHours();
+    const h = getTradingDateParts(t.openedAt).hour;
     const slot = [...TIME_SLOTS].reverse().find(s => h >= s.start)!;
     slotGroups.get(slot.start)!.push(t);
   });

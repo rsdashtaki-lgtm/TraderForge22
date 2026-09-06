@@ -219,31 +219,48 @@ interface NoteFormProps {
 }
 
 function NoteFormDialog({ open, onClose, onSave, initial, categories }: NoteFormProps) {
-  const [form, setForm] = useState<Partial<KnowledgeNote>>({
+  const createInitialForm = (note?: Partial<KnowledgeNote>): Partial<KnowledgeNote> => ({
     title: '', content: '', category: 'trading-rules', importance: 'medium',
     color: '#6b7280', source: 'manual', status: 'active', isActive: true,
     isPinned: false, isRule: false, reviewFrequency: 'as-needed',
     requireConfirmation: false, tags: '[]', relatedSymbols: '[]',
     relatedSessions: '[]', relatedDays: '[]', relatedStrategies: '[]',
     relatedSetups: '[]', relatedTimeframes: '[]', relatedMarketRegimes: '[]',
-    ...initial,
+    ...note,
   });
 
-  const [tagsInput, setTagsInput] = useState(() => {
-    try { return (JSON.parse(initial?.tags || '[]') as string[]).join(', '); } catch { return ''; }
-  });
-  const [symbolsInput, setSymbolsInput] = useState(() => {
-    try { return (JSON.parse(initial?.relatedSymbols || '[]') as string[]).join(', '); } catch { return ''; }
-  });
-  const [sessionsInput, setSessionsInput] = useState(() => {
-    try { return (JSON.parse(initial?.relatedSessions || '[]') as string[]); } catch { return [] as string[]; }
-  });
-  const [daysInput, setDaysInput] = useState<number[]>(() => {
-    try { return JSON.parse(initial?.relatedDays || '[]') as number[]; } catch { return []; }
-  });
+  const parseList = <T,>(value: string | null | undefined, fallback: T[]): T[] => {
+    try {
+      const parsed = JSON.parse(value || '[]');
+      return Array.isArray(parsed) ? parsed as T[] : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
+  const initialForm = createInitialForm(initial);
+  const [form, setForm] = useState<Partial<KnowledgeNote>>(initialForm);
+  const [tagsInput, setTagsInput] = useState(() => parseList<string>(initial?.tags, []).join(', '));
+  const [symbolsInput, setSymbolsInput] = useState(() => parseList<string>(initial?.relatedSymbols, []).join(', '));
+  const [sessionsInput, setSessionsInput] = useState<string[]>(() => parseList<string>(initial?.relatedSessions, []));
+  const [daysInput, setDaysInput] = useState<number[]>(() => parseList<number>(initial?.relatedDays, []));
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [similar, setSimilar] = useState<KnowledgeNote[]>([]);
-  const [merging, setMerging] = useState<string | null>(null);
+
+  // The dialog stays mounted while the parent switches between notes. Reset all
+  // local fields when it opens or when its edit target changes; otherwise the
+  // first note's form values leak into every subsequent edit/new-note action.
+  useEffect(() => {
+    if (!open) return;
+    const next = createInitialForm(initial);
+    setForm(next);
+    setTagsInput(parseList<string>(initial?.tags, []).join(', '));
+    setSymbolsInput(parseList<string>(initial?.relatedSymbols, []).join(', '));
+    setSessionsInput(parseList<string>(initial?.relatedSessions, []));
+    setDaysInput(parseList<number>(initial?.relatedDays, []));
+    setShowAdvanced(false);
+    setSimilar([]);
+  }, [open, initial?.id]);
 
   // Importance → auto color
   useEffect(() => {
@@ -2227,6 +2244,7 @@ export default function KnowledgeBase() {
 
       {/* Dialogs */}
       <NoteFormDialog
+        key={`${showCreate ? 'open' : 'closed'}:${editNote?.id ?? 'new'}`}
         open={showCreate}
         onClose={() => { setShowCreate(false); setEditNote(null); }}
         onSave={handleSave}

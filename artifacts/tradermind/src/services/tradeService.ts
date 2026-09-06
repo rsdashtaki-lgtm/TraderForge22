@@ -1,11 +1,35 @@
 import { db, Trade, defaultPostTradeReview } from '../db/database';
-import { isWin, isClosed } from '../lib/tradeHelpers';
+import { isWin, isClosed, getNetPnl } from '../lib/tradeHelpers';
 import { strategyService } from './strategyService';
 import { analysisService } from './analysisService';
 import { tradeVersionService, tradeEventService } from './tradeEventService';
+import { detectTradingSession } from '../lib/tradeClassification';
 
 const defaultReview = JSON.stringify({ didWell: '', didWrong: '', learned: '', wouldTakeAgain: null, validSetup: null });
 const defaultPostTradeReviewStr = JSON.stringify(defaultPostTradeReview);
+
+/**
+ * IndexedDB updates for the same trade are serialized here instead of relying
+ * on whichever renderer event happens to reach Dexie first.  The queue only
+ * coordinates updates; it never turns an update into a create.
+ */
+const tradeUpdateQueues = new Map<string, Promise<void>>();
+
+async function serializeTradeUpdate<T>(tradeId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = tradeUpdateQueues.get(tradeId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>(resolve => { release = resolve; });
+  const tail = previous.then(() => current);
+  tradeUpdateQueues.set(tradeId, tail);
+
+  try {
+    await previous;
+    return await operation();
+  } finally {
+    release();
+    if (tradeUpdateQueues.get(tradeId) === tail) tradeUpdateQueues.delete(tradeId);
+  }
+}
 
 export const tradeService = {
   async getAllTrades() {
@@ -23,11 +47,33 @@ export const tradeService = {
   async createTrade(data: Partial<Trade> = {}): Promise<Trade> {
     const id = crypto.randomUUID();
     const now = Date.now();
+    // تنظیمات پیش‌فرض از localStorage خوانده می‌شوند تا سرویس دیتابیس
+    // به React وابسته نباشد و در Electron/Capacitor هم یکسان کار کند.
+    let defaults: Partial<Trade> = {};
+    try {
+      const stored = JSON.parse(localStorage.getItem('tradermind-app-storage') ?? '{}')?.state;
+      defaults = {
+        accountId: stored?.defaultAccountId ?? null,
+        boxId: stored?.defaultTradingBoxId ?? null,
+        symbol: stored?.defaultSymbol ?? '',
+        market: stored?.defaultMarket ?? null,
+      };
+    } catch { /* تنظیمات خراب نباید ثبت معامله را متوقف کند */ }
+
+    // تنظیمات ممکن است به حساب یا باکسی اشاره کنند که بعداً حذف شده است.
+    // در این حالت معامله جدید باید بدون شناسه‌ی نامعتبر ساخته شود.
+    const [defaultAccount, defaultBox] = await Promise.all([
+      defaults.accountId ? db.accounts.get(defaults.accountId) : Promise.resolve(undefined),
+      defaults.boxId ? db.tradingBoxes.get(defaults.boxId) : Promise.resolve(undefined),
+    ]);
+    defaults.accountId = defaultAccount?.id ?? null;
+    defaults.boxId = defaultBox?.id ?? null;
+
     const trade: Trade = {
       sessionId: null, strategyId: null, symbol: '', market: null,
       direction: 'long', entryPrice: 0, exitPrice: null, stopLoss: 0,
       takeProfit: null, positionSize: null, riskPercentage: null, riskAmount: null,
-      rMultiple: null, result: 'open', profitLoss: null, fees: null, status: 'open',
+      rMultiple: null, result: 'open', profitLoss: null, fees: null, commission: null, spread: null, status: 'open',
       openedAt: now, closedAt: null, reasonForExit: null,
       emotions: '[]', emotionNotes: null, notes: null,
       screenshots: '[]', adherenceScore: null, adherenceRating: null,
@@ -35,15 +81,17 @@ export const tradeService = {
       tags: '[]', liveMonitoring: null, createdAt: now,
       plannedEntry: null, plannedSL: null, plannedTP: null, plannedRR: null,
       plannedRisk: null, plannedPositionSize: null,
-      tradingSession: null, setupType: null, timezone: null,
+      setupType: null, timezone: null,
       entryReason: null, lesson: null,
       slMoved: null, tpMoved: null, partialClose: null, addedToPosition: null,
       reducedPosition: null, manualExit: null, managementReason: null,
-      mtfAnalysis: null,
+       mtfAnalysis: null, preTradeBriefing: null,
+      ...defaults,
       ...data,
       id,
-      accountId: data.accountId ?? null,
-      boxId: data.boxId ?? null,
+      accountId: data.accountId ?? defaults.accountId ?? null,
+      boxId: data.boxId ?? defaults.boxId ?? null,
+      tradingSession: data.tradingSession ?? detectTradingSession(data.openedAt ?? now),
     };
 
     await db.transaction('rw', [db.trades, db.tradeEvents, db.tradeVersions], async () => {
@@ -79,41 +127,61 @@ export const tradeService = {
    * PART 1-2: بروزرسانی معامله + ثبت نسخه در یک transaction واحد (Atomic)
    */
   async updateTrade(id: string, data: Partial<Trade>) {
-    const existing = await db.trades.get(id);
-    if (!existing) {
-      await db.trades.update(id, data);
-      return db.trades.get(id);
+    const tradeId = typeof id === 'string' ? id.trim() : '';
+    if (!tradeId) {
+      throw new Error('UPDATE requires an existing trade ID');
     }
 
-    await db.transaction('rw', [db.trades, db.tradeVersions, db.tradeEvents], async () => {
-      // بروزرسانی معامله
-      await db.trades.update(id, data);
-
-      // ثبت نسخه در صورت تغییر فیلدهای مهم
-      await tradeVersionService.recordVersion(existing, data);
-
-      // اگر معامله بسته شد، رویداد exit اضافه کن
-      if (data.status === 'closed' && data.exitPrice != null && data.closedAt != null) {
-        const hasExitEvent = await db.tradeEvents
-          .where('tradeId').equals(id)
-          .filter(e => e.eventType === 'exit')
-          .count();
-        if (hasExitEvent === 0) {
-          await db.tradeEvents.add({
-            id: crypto.randomUUID(),
-            tradeId: id,
-            eventType: 'exit',
-            timestamp: data.closedAt,
-            description: `خروج از ${existing.symbol} @ ${data.exitPrice}${data.result ? ` — ${data.result}` : ''}`,
-            price: data.exitPrice,
-            data: null,
-            createdAt: Date.now(),
-          });
-        }
-      }
+    const operationId = crypto.randomUUID();
+    console.debug('[TradeSave]', {
+      mode: 'UPDATE',
+      tradeId,
+      source: 'tradeService',
+      operationId,
+      timestamp: Date.now(),
     });
 
-    return db.trades.get(id);
+    return serializeTradeUpdate(tradeId, async () => {
+      const existing = await db.trades.get(tradeId);
+      if (!existing) {
+        const error = new Error(`Trade "${tradeId}" no longer exists; refusing to create during UPDATE`);
+        console.error('[TradeSave] rejected missing UPDATE target', { tradeId, operationId });
+        throw error;
+      }
+
+      // The primary key is owned by the database identity, never by an edit
+      // payload.  This makes accidental ID replacement impossible.
+      const { id: _ignoredId, ...editableData } = data as Partial<Trade> & { id?: string };
+
+      await db.transaction('rw', [db.trades, db.tradeVersions, db.tradeEvents], async () => {
+        await db.trades.update(tradeId, editableData);
+
+        // ثبت نسخه در صورت تغییر فیلدهای مهم
+        await tradeVersionService.recordVersion(existing, editableData);
+
+        // اگر معامله بسته شد، رویداد exit اضافه کن
+        if (editableData.status === 'closed' && editableData.exitPrice != null && editableData.closedAt != null) {
+          const hasExitEvent = await db.tradeEvents
+            .where('tradeId').equals(tradeId)
+            .filter(e => e.eventType === 'exit')
+            .count();
+          if (hasExitEvent === 0) {
+            await db.tradeEvents.add({
+              id: crypto.randomUUID(),
+              tradeId,
+              eventType: 'exit',
+              timestamp: editableData.closedAt,
+              description: `خروج از ${existing.symbol} @ ${editableData.exitPrice}${editableData.result ? ` — ${editableData.result}` : ''}`,
+              price: editableData.exitPrice,
+              data: null,
+              createdAt: Date.now(),
+            });
+          }
+        }
+      });
+
+      return db.trades.get(tradeId);
+    });
   },
 
   /**
@@ -183,7 +251,7 @@ export const tradeService = {
     return {
       total: trades.length,
       winRate: closed.length > 0 ? (wins.length / closed.length) * 100 : 0,
-      totalPnl: trades.reduce((acc, t) => acc + (t.profitLoss || 0) - (t.fees || 0), 0),
+      totalPnl: trades.reduce((acc, t) => acc + (getNetPnl(t) ?? 0), 0),
       avgRMultiple: withR.length > 0 ? withR.reduce((acc, t) => acc + (t.rMultiple || 0), 0) / withR.length : 0,
       closedCount: closed.length,
       openCount: trades.filter(t => t.status === 'open').length,

@@ -67,6 +67,8 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
   const [startPoint, setStartPoint] = useState<AnnotationPoint | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(true);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const dragRef = useRef<{ id: string; pointIndex: number | null; last: AnnotationPoint } | null>(null);
 
   // Load image onto canvas background
   useEffect(() => {
@@ -80,7 +82,7 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
 
   useEffect(() => {
     renderCanvas();
-  }, [annotations, showAnnotations, hoveredId]);
+  }, [annotations, showAnnotations, hoveredId, selectedId]);
 
   const getRelativePoint = (e: React.MouseEvent<HTMLCanvasElement>): AnnotationPoint => {
     const canvas = canvasRef.current!;
@@ -119,9 +121,10 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
   ) {
     const color = ann.color;
     const mode = MODE_FOR_TYPE[ann.type];
+    const active = ann.id === selectedId;
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
-    ctx.lineWidth = hovered ? 3 : 2;
+    ctx.lineWidth = hovered || active ? 3 : 2;
     ctx.font = '12px sans-serif';
     ctx.textBaseline = 'top';
 
@@ -170,11 +173,92 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
       ctx.fillStyle = '#fff';
       ctx.fillText(ann.label, x + 4, y + 4);
     }
+
+    if (active) {
+      ctx.fillStyle = '#fff';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      for (const point of ann.points) {
+        ctx.beginPath();
+        ctx.arc(point.x * w, point.y * h, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
   }
+
+  const clampPoint = (point: AnnotationPoint): AnnotationPoint => ({
+    x: Math.max(0, Math.min(1, point.x)),
+    y: Math.max(0, Math.min(1, point.y)),
+  });
+
+  const distance = (a: AnnotationPoint, b: AnnotationPoint) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  const distanceToSegment = (point: AnnotationPoint, a: AnnotationPoint, b: AnnotationPoint) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengthSquared = dx * dx + dy * dy;
+    if (!lengthSquared) return distance(point, a);
+    const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared));
+    return distance(point, { x: a.x + t * dx, y: a.y + t * dy });
+  };
+
+  const findHitAnnotation = (point: AnnotationPoint) => {
+    const tolerance = 0.035;
+    for (let index = annotations.length - 1; index >= 0; index -= 1) {
+      const ann = annotations[index];
+      const mode = MODE_FOR_TYPE[ann.type];
+      const pointIndex = ann.points.findIndex(p => distance(point, p) <= tolerance);
+      if (pointIndex >= 0) return { id: ann.id, pointIndex };
+      if (mode === 'line' && ann.points.length >= 2 && distanceToSegment(point, ann.points[0], ann.points[1]) <= tolerance) {
+        return { id: ann.id, pointIndex: null };
+      }
+      if (mode === 'zone' && ann.points.length >= 2) {
+        const minX = Math.min(ann.points[0].x, ann.points[1].x);
+        const maxX = Math.max(ann.points[0].x, ann.points[1].x);
+        const minY = Math.min(ann.points[0].y, ann.points[1].y);
+        const maxY = Math.max(ann.points[0].y, ann.points[1].y);
+        if (point.x >= minX - tolerance && point.x <= maxX + tolerance &&
+          point.y >= minY - tolerance && point.y <= maxY + tolerance) {
+          return { id: ann.id, pointIndex: null };
+        }
+      }
+    }
+    return null;
+  };
+
+  const beginDrag = (point: AnnotationPoint) => {
+    const hit = findHitAnnotation(point);
+    if (!hit) return false;
+    setSelectedId(hit.id);
+    dragRef.current = { ...hit, last: point };
+    return true;
+  };
+
+  const moveSelected = (point: AnnotationPoint) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = point.x - drag.last.x;
+    const dy = point.y - drag.last.y;
+    onChange(annotations.map(annotation => {
+      if (annotation.id !== drag.id) return annotation;
+      const points = annotation.points.map((item, index) => {
+        if (drag.pointIndex !== null && index !== drag.pointIndex) return item;
+        return clampPoint({ x: item.x + dx, y: item.y + dy });
+      });
+      return { ...annotation, points };
+    }));
+    drag.last = point;
+  };
+
+  const endDrag = () => {
+    dragRef.current = null;
+  };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (readOnly) return;
     const pt = getRelativePoint(e);
+    if (beginDrag(pt)) return;
     const mode = MODE_FOR_TYPE[selectedType];
 
     if (mode === 'point') {
@@ -195,6 +279,10 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
   };
 
   const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (dragRef.current) {
+      endDrag();
+      return;
+    }
     if (!isDrawing || !startPoint || readOnly) return;
     const pt = getRelativePoint(e);
     const mode = MODE_FOR_TYPE[selectedType];
@@ -215,6 +303,10 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
     setStartPoint(null);
   };
 
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!readOnly && dragRef.current) moveSelected(getRelativePoint(e));
+  };
+
   // ── Touch support (mobile) ────────────────────────────────────────
   const getTouchPoint = (e: React.TouchEvent<HTMLCanvasElement>): AnnotationPoint => {
     const canvas = canvasRef.current!;
@@ -230,6 +322,7 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
     e.preventDefault(); // prevent scroll while drawing
     if (readOnly) return;
     const pt = getTouchPoint(e);
+    if (beginDrag(pt)) return;
     const mode = MODE_FOR_TYPE[selectedType];
 
     if (mode === 'point') {
@@ -250,6 +343,11 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
 
   const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
     e.preventDefault();
+    if (dragRef.current) {
+      moveSelected(getTouchPoint(e));
+      endDrag();
+      return;
+    }
     if (!isDrawing || !startPoint || readOnly) return;
     const pt = getTouchPoint(e);
     const mode = MODE_FOR_TYPE[selectedType];
@@ -270,8 +368,14 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
     setStartPoint(null);
   };
 
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    if (!readOnly && dragRef.current) moveSelected(getTouchPoint(e));
+  };
+
   const removeAnnotation = (id: string) => {
     onChange(annotations.filter(a => a.id !== id));
+    if (selectedId === id) setSelectedId(null);
   };
 
   const clearAll = () => {
@@ -325,8 +429,10 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
           height={600}
           className="w-full h-auto cursor-crosshair"
           onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           style={{ cursor: readOnly ? 'default' : 'crosshair', touchAction: 'none' }}
         />
@@ -345,8 +451,10 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
           {annotations.map(ann => (
             <div
               key={ann.id}
-              className="flex items-center justify-between px-2 py-1 rounded text-xs bg-white/5
-                         hover:bg-white/10 transition-colors cursor-default"
+              className={`flex items-center justify-between px-2 py-1 rounded text-xs
+                          ${selectedId === ann.id ? 'bg-primary/15 ring-1 ring-primary/40' : 'bg-white/5'}
+                         hover:bg-white/10 transition-colors cursor-pointer`}
+              onClick={() => setSelectedId(ann.id)}
               onMouseEnter={() => setHoveredId(ann.id)}
               onMouseLeave={() => setHoveredId(null)}
             >
@@ -369,6 +477,34 @@ function AnnotationCanvas({ imageDataUrl, annotations, onChange, readOnly = fals
           ))}
         </div>
       )}
+
+      {!readOnly && selectedId && (() => {
+        const selected = annotations.find(annotation => annotation.id === selectedId);
+        if (!selected) return null;
+        return (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 p-2">
+            <span className="text-xs text-muted-foreground">ویرایش حاشیه‌نویسی:</span>
+            <input
+              value={selected.label}
+              onChange={e => onChange(annotations.map(annotation =>
+                annotation.id === selected.id ? { ...annotation, label: e.target.value } : annotation
+              ))}
+              className="h-7 min-w-36 flex-1 rounded-md border border-border bg-background px-2 text-xs"
+              aria-label="عنوان حاشیه‌نویسی"
+            />
+            <input
+              type="color"
+              value={selected.color.startsWith('#') ? selected.color.slice(0, 7) : '#f59e0b'}
+              onChange={e => onChange(annotations.map(annotation =>
+                annotation.id === selected.id ? { ...annotation, color: e.target.value } : annotation
+              ))}
+              className="h-7 w-9 cursor-pointer rounded border border-border bg-background p-0.5"
+              aria-label="رنگ حاشیه‌نویسی"
+            />
+            <span className="text-[10px] text-muted-foreground">دستگیره‌ها یا خود شکل را بکشید</span>
+          </div>
+        );
+      })()}
     </div>
   );
 }

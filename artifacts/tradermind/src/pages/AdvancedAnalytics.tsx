@@ -25,6 +25,7 @@ import {
   Award, Calendar, Activity, RefreshCw, AlertTriangle, BarChart2, Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAppStore } from '@/store/useAppStore';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 function isWin(t: Trade)  { return t.result === 'win' || t.result === 'partial-win'; }
@@ -122,6 +123,8 @@ type RangeKey = Exclude<TimeRangeKey, 'custom'> | 'all';
 
 // ─── Main Component ───────────────────────────────────────────────
 export default function AdvancedAnalytics() {
+  const tradingTimeMode = useAppStore(s => s.tradingTimeMode);
+  const brokerUtcOffsetMinutes = useAppStore(s => s.brokerUtcOffsetMinutes);
   const [range, setRange]       = useState<RangeKey>('all');
   const [tab, setTab]           = useState<TabKey>('summary');
   const [allTrades, setAllTrades]   = useState<Trade[]>([]);
@@ -152,7 +155,7 @@ export default function AdvancedAnalytics() {
     if (range === 'all') return allTrades;
     const { from, to } = getDateRange(range as Exclude<TimeRangeKey, 'custom'>);
     return filterTradesByRange(allTrades, from, to);
-  }, [allTrades, range]);
+  }, [allTrades, range, tradingTimeMode, brokerUtcOffsetMinutes]);
 
   const closedTrades = useMemo(() => trades.filter(isClosed), [trades]);
 
@@ -164,9 +167,9 @@ export default function AdvancedAnalytics() {
   );
 
   // ── Timing breakdowns ────────────────────────────────────────
-  const byDay     = useMemo(() => getByDay(trades), [trades]);
-  const byHour    = useMemo(() => getByHour(trades), [trades]);
-  const bySession = useMemo(() => getBySession(trades), [trades]);
+  const byDay     = useMemo(() => getByDay(trades), [trades, tradingTimeMode, brokerUtcOffsetMinutes]);
+  const byHour    = useMemo(() => getByHour(trades), [trades, tradingTimeMode, brokerUtcOffsetMinutes]);
+  const bySession = useMemo(() => getBySession(trades), [trades, tradingTimeMode, brokerUtcOffsetMinutes]);
 
   // ── Asset breakdowns ─────────────────────────────────────────
   const bySymbol  = useMemo(() => getBySymbol(trades).slice(0, 12), [trades]);

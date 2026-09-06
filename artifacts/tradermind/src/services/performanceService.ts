@@ -4,19 +4,21 @@
  */
 import { Trade, PostTradeReviewData } from '../db/database';
 import { avg, median, stdDev, toDateStr, isWin, isLoss, isClosed, getPTR, flagCount } from '../lib/tradeHelpers';
+import { getTradingDateParts, getTradingMonthKey } from '../lib/tradingTime';
 
 // ─────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────
 function weekKey(ts: number): string {
-  const d = new Date(ts);
-  const day = d.getUTCDay();
-  const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
-  const mon = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), diff));
+  const p = getTradingDateParts(ts);
+  const date = new Date(Date.UTC(p.year, p.month, p.day));
+  const day = date.getUTCDay();
+  const diff = date.getUTCDate() - day + (day === 0 ? -6 : 1);
+  const mon = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), diff));
   return `${mon.getUTCFullYear()}-W${String(Math.ceil((mon.getUTCDate() + (mon.getUTCDay() || 7) - 1) / 7)).padStart(2, '0')}`;
 }
 function monthKey(ts: number): string {
-  const d = new Date(ts); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  return getTradingMonthKey(ts);
 }
 function getR(t: Trade): number | null { return t.rMultiple ?? null; }
 
@@ -133,7 +135,7 @@ const DAY_NAMES = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه'
 export function getByDay(trades: Trade[]): DayPerf[] {
   const byDay = new Map<number, Trade[]>();
   trades.filter(isClosed).forEach(t => {
-    const d = new Date(t.openedAt).getUTCDay();
+    const d = getTradingDateParts(t.openedAt).dayOfWeek;
     if (!byDay.has(d)) byDay.set(d, []);
     byDay.get(d)!.push(t);
   });
@@ -147,10 +149,10 @@ export function getByDay(trades: Trade[]): DayPerf[] {
 // ─────────────────────────────────────────────────────────────────
 export interface HourPerf extends BaseMetrics { hour: number; label: string; }
 
-export function getByHour(trades: Trade[], tzOffsetMinutes = 0): HourPerf[] {
+export function getByHour(trades: Trade[]): HourPerf[] {
   const byHour = new Map<number, Trade[]>();
   trades.filter(isClosed).forEach(t => {
-    const h = Math.floor(((t.openedAt + tzOffsetMinutes * 60000) % 86400000) / 3600000);
+    const h = getTradingDateParts(t.openedAt).hour;
     if (!byHour.has(h)) byHour.set(h, []);
     byHour.get(h)!.push(t);
   });

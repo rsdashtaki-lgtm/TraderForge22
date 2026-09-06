@@ -9,15 +9,17 @@
 
 import { Trade } from '../db/database';
 import { isWin, isLoss, isClosed } from '../lib/tradeHelpers';
+import { getTradingDateParts } from '../lib/tradingTime';
+import type { TradingTimeConfig } from '../lib/tradingTime';
 
 // ── Message Types ─────────────────────────────────────────────────────────────
 
 export type WorkerRequest =
-  | { type: 'COMPUTE_EDGE'; trades: Trade[] }
-  | { type: 'COMPUTE_PERFORMANCE'; trades: Trade[] }
-  | { type: 'COMPUTE_RISK'; trades: Trade[] }
-  | { type: 'COMPUTE_STATISTICS'; trades: Trade[] }
-  | { type: 'COMPUTE_ALL'; trades: Trade[] };
+  | { type: 'COMPUTE_EDGE'; trades: Trade[]; timeConfig?: TradingTimeConfig }
+  | { type: 'COMPUTE_PERFORMANCE'; trades: Trade[]; timeConfig?: TradingTimeConfig }
+  | { type: 'COMPUTE_RISK'; trades: Trade[]; timeConfig?: TradingTimeConfig }
+  | { type: 'COMPUTE_STATISTICS'; trades: Trade[]; timeConfig?: TradingTimeConfig }
+  | { type: 'COMPUTE_ALL'; trades: Trade[]; timeConfig?: TradingTimeConfig };
 
 export type WorkerResponse =
   | { type: 'EDGE_RESULT'; data: EdgeAnalyticsResult }
@@ -94,7 +96,7 @@ function stdDev(arr: number[]): number | null {
 
 // ── Computation Functions ─────────────────────────────────────────────────────
 
-function computeEdge(trades: Trade[]): EdgeAnalyticsResult {
+function computeEdge(trades: Trade[], timeConfig?: TradingTimeConfig): EdgeAnalyticsResult {
   const closed = trades.filter(isClosed);
   const wins = closed.filter(isWin);
   const losses = closed.filter(isLoss);
@@ -151,7 +153,7 @@ function computeEdge(trades: Trade[]): EdgeAnalyticsResult {
   // Best day of week
   const DAYS = ['یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه', 'شنبه'];
   const dayWins = DAYS.map((d, i) => {
-    const dt = closed.filter(t => new Date(t.openedAt).getDay() === i);
+    const dt = closed.filter(t => getTradingDateParts(t.openedAt, timeConfig).dayOfWeek === i);
     return { day: d, winRate: dt.length > 0 ? dt.filter(isWin).length / dt.length : null };
   });
   const bestDayOfWeek = dayWins.sort((a, b) => (b.winRate ?? 0) - (a.winRate ?? 0))[0]?.day ?? null;
@@ -272,7 +274,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     const { type, trades } = event.data;
     switch (type) {
       case 'COMPUTE_EDGE':
-        self.postMessage({ type: 'EDGE_RESULT', data: computeEdge(trades) } as WorkerResponse);
+        self.postMessage({ type: 'EDGE_RESULT', data: computeEdge(trades, event.data.timeConfig) } as WorkerResponse);
         break;
       case 'COMPUTE_PERFORMANCE':
         self.postMessage({ type: 'PERFORMANCE_RESULT', data: computePerformance(trades) } as WorkerResponse);
@@ -287,7 +289,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         self.postMessage({
           type: 'ALL_RESULT',
           data: {
-            edge: computeEdge(trades),
+          edge: computeEdge(trades, event.data.timeConfig),
             performance: computePerformance(trades),
             risk: computeRisk(trades),
             statistics: computeStatistics(trades),

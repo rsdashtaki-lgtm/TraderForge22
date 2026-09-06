@@ -31,6 +31,7 @@ import type {
   LessonTrackEntry,
 } from '../services/performanceService';
 import { getPostLossBehavior, getPostWinBehavior } from '../services/riskService';
+import { useAppStore } from '../store/useAppStore';
 
 // ─────────────────────────────────────────────────────────────────
 // UI Helpers
@@ -151,6 +152,8 @@ type TabId = typeof TAB_LIST[number]['id'];
 // Main Component
 // ─────────────────────────────────────────────────────────────────
 export default function PerformanceDashboard() {
+  const tradingTimeMode = useAppStore(s => s.tradingTimeMode);
+  const brokerUtcOffsetMinutes = useAppStore(s => s.brokerUtcOffsetMinutes);
   const [tab, setTab] = useState<TabId>('overview');
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
@@ -186,14 +189,14 @@ export default function PerformanceDashboard() {
     const now = Date.now();
     const ms = { '3m': 90, '6m': 180, '1y': 365 }[timeRange] * 86400000;
     return trades.filter(t => t.openedAt >= now - ms);
-  }, [trades, timeRange]);
+  }, [trades, timeRange, tradingTimeMode, brokerUtcOffsetMinutes]);
 
   const profile = useMemo(() => getPerformanceProfile(filtered), [filtered]);
   const scorecard = useMemo(() => getScorecard(filtered), [filtered]);
   const processQ = useMemo(() => getProcessQuality(filtered), [filtered]);
-  const byDay = useMemo(() => getByDay(filtered), [filtered]);
-  const byHour = useMemo(() => getByHour(filtered), [filtered]);
-  const bySession = useMemo(() => getBySession(filtered), [filtered]);
+  const byDay = useMemo(() => getByDay(filtered), [filtered, tradingTimeMode, brokerUtcOffsetMinutes]);
+  const byHour = useMemo(() => getByHour(filtered), [filtered, tradingTimeMode, brokerUtcOffsetMinutes]);
+  const bySession = useMemo(() => getBySession(filtered), [filtered, tradingTimeMode, brokerUtcOffsetMinutes]);
   const bySymbol = useMemo(() => getBySymbol(filtered), [filtered]);
   const bySetup = useMemo(() => getBySetup(filtered), [filtered]);
   const combos = useMemo(() => getBestCombos(filtered), [filtered]);

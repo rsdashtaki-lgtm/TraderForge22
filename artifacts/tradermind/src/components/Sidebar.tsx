@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from "../store/useAppStore";
@@ -28,9 +29,11 @@ import {
   HeartPulse,
   CreditCard,
   Box,
+  Bell,
 } from "lucide-react";
 
 import { cn } from "../lib/utils";
+import { DISPLAY_VERSION } from "../constants/version";
 import { Button } from "./ui/button";
 import { t } from "../lib/i18n";
 
@@ -115,6 +118,23 @@ export function Sidebar() {
     useShallow(s => ({ sidebarOpen: s.sidebarOpen, setSidebarOpen: s.setSidebarOpen, appName: s.appName }))
   );
 
+  // Drawer موبایل نباید از اجرای قبلی یا حالت پس‌زمینهٔ Android به صفحه
+  // نشت کند. در دسکتاپ این state روی نمایش Sidebar اثری ندارد.
+  useEffect(() => {
+    setSidebarOpen(false);
+
+    const closeWhenHidden = () => {
+      if (document.hidden) setSidebarOpen(false);
+    };
+    document.addEventListener("visibilitychange", closeWhenHidden);
+    return () => document.removeEventListener("visibilitychange", closeWhenHidden);
+  }, [setSidebarOpen]);
+
+  // تغییر مسیر از هر راهی (Back، deep link یا انتخاب آیتم) Drawer را می‌بندد.
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location, setSidebarOpen]);
+
 
 
   const isActive = (href: string) =>
@@ -174,16 +194,6 @@ export function Sidebar() {
           href: "/journal/insights",
           icon: Lightbulb,
           label: "نکات معاملاتی",
-        },
-        {
-          href: "/accounts",
-          icon: CreditCard,
-          label: "حساب‌های معاملاتی",
-        },
-        {
-          href: "/trading-boxes",
-          icon: Box,
-          label: "باکس‌های معاملاتی",
         },
       ],
     },
@@ -303,8 +313,18 @@ export function Sidebar() {
 
 
     {
-      title: t.nav.system,
+      title: "مدیریت و پشتیبانی",
       items: [
+        {
+          href: "/accounts",
+          icon: CreditCard,
+          label: "حساب‌های معاملاتی",
+        },
+        {
+          href: "/trading-boxes",
+          icon: Box,
+          label: "باکس‌های معاملاتی",
+        },
         {
           href: "/backup",
           icon: HardDrive,
@@ -314,6 +334,11 @@ export function Sidebar() {
           href: "/settings",
           icon: Settings,
           label: t.nav.settings,
+        },
+        {
+          href: "/reminders",
+          icon: Bell,
+          label: "یادآورها",
         },
       ],
     },
@@ -365,6 +390,7 @@ export function Sidebar() {
             z-40
             md:hidden
           "
+          aria-hidden="true"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -374,17 +400,22 @@ export function Sidebar() {
       {/* ── Sidebar دسکتاپ + Drawer موبایل */}
       <aside
         className={cn(
-          "fixed right-0 z-50 w-64 bg-sidebar border-l flex flex-col",
-          "transition-transform duration-300 ease-in-out",
-          "md:translate-x-0",
-          sidebarOpen
-            ? "translate-x-0"
-            : "translate-x-full"
+          "tradermind-mobile-drawer fixed z-50 bg-sidebar border-l flex flex-col"
         )}
         style={{
+          // Keep the drawer inside the visual viewport on Android WebView.
+          // Explicit physical sides avoid RTL + transform rounding bugs.
+          right: 0,
+          left: "auto",
+          // Layout reserves md:pr-64 (16rem) on desktop; keep both values
+          // identical so the module menu never covers the content column.
+          width: "min(16rem, 100vw)",
+          maxWidth: "100vw",
           top: "56px",
           height: "calc(100dvh - 56px)",
         }}
+        data-open={sidebarOpen ? "true" : "false"}
+        dir="rtl"
       >
 
 
@@ -529,7 +560,7 @@ export function Sidebar() {
             text-muted-foreground
             text-center
           ">
-            TraderMind • v1.0.0
+            TraderMind • {DISPLAY_VERSION}
           </p>
         </div>
 

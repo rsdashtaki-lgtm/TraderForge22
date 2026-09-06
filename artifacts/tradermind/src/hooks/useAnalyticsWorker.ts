@@ -14,6 +14,7 @@ import type {
   RiskResult,
   StatisticsResult,
 } from '../workers/analytics.worker';
+import type { TradingTimeConfig } from '../lib/tradingTime';
 
 interface AllAnalyticsResult {
   edge: EdgeAnalyticsResult;
@@ -26,7 +27,7 @@ interface UseAnalyticsWorkerReturn {
   result: AllAnalyticsResult | null;
   isComputing: boolean;
   error: string | null;
-  compute: (trades: Trade[]) => void;
+  compute: (trades: Trade[], timeConfig?: TradingTimeConfig) => void;
 }
 
 export function useAnalyticsWorker(): UseAnalyticsWorkerReturn {
@@ -70,11 +71,11 @@ export function useAnalyticsWorker(): UseAnalyticsWorkerReturn {
     };
   }, []);
 
-  const compute = useCallback((trades: Trade[]) => {
+  const compute = useCallback((trades: Trade[], timeConfig?: TradingTimeConfig) => {
     if (!workerRef.current) return;
     setIsComputing(true);
     setError(null);
-    workerRef.current.postMessage({ type: 'COMPUTE_ALL', trades });
+    workerRef.current.postMessage({ type: 'COMPUTE_ALL', trades, timeConfig });
   }, []);
 
   return { result, isComputing, error, compute };

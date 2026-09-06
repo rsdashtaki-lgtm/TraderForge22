@@ -4,7 +4,8 @@
  */
 
 import { Trade } from '../db/database';
-import { avg, median, stdDev, isWin, isLoss, isClosed } from '../lib/tradeHelpers';
+import { avg, median, stdDev, isWin, isLoss, isClosed, getNetPnl } from '../lib/tradeHelpers';
+import { getTradingDateKey, getTradingDateParts, getTradingMonthKey } from '../lib/tradingTime';
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -57,9 +58,8 @@ export function tradeRMultiple(t: Trade): number | null {
 
 /** کدام روز هفته UTC+3:30 (تهران) — 0=شنبه...6=جمعه */
 export function dayOfWeekIR(ts: number): number {
-  // تبدیل به روز هفته ایرانی: شنبه=0 ... جمعه=6
-  const d = new Date(ts);
-  return (d.getUTCDay() + 1) % 7; // جابجایی: 0=Sunday→6, 6=Saturday→5
+  // 0=یکشنبه ... 6=شنبه؛ ترتیب با Date و نمودارهای دیگر یکسان است.
+  return getTradingDateParts(ts).dayOfWeek;
 }
 
 export const DAY_LABELS_FA: Record<number, string> = {
@@ -71,15 +71,15 @@ export const DAY_LABELS_EN: Record<number, string> = {
 };
 
 export function dateStr(ts: number): string {
-  return new Date(ts).toISOString().slice(0, 10);
+  return getTradingDateKey(ts);
 }
 
 export function weekKey(ts: number): string {
-  const d = new Date(ts);
-  // start of ISO week (Mon)
+  const p = getTradingDateParts(ts);
+  const d = new Date(Date.UTC(p.year, p.month, p.day));
   const day = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() - day + 1);
-  return d.toISOString().slice(0, 10);
+  return getTradingDateKey(d.getTime());
 }
 
 export const SESSION_LABELS: Record<string, string> = {
@@ -245,7 +245,7 @@ export interface DayOfWeekRisk {
 export function getRiskByDayOfWeek(trades: Trade[], profile: RiskProfileData | null): DayOfWeekRisk[] {
   const maxRisk = profile?.maxRiskPct ?? null;
   return [1, 2, 3, 4, 5].map(day => { // Mon=1 ... Fri=5
-    const dt = trades.filter(t => new Date(t.openedAt).getUTCDay() === day);
+    const dt = trades.filter(t => getTradingDateParts(t.openedAt).dayOfWeek === day);
     const risks = dt.filter(t => t.riskPercentage !== null).map(t => t.riskPercentage!);
     const rs = dt.filter(t => tradeRMultiple(t) !== null).map(t => tradeRMultiple(t)!);
     const closed = dt.filter(isClosed);
@@ -443,7 +443,7 @@ export function getDrawdownAnalysis(trades: Trade[], startEquity: number): Drawd
   const curve: DrawdownPoint[] = [];
 
   sorted.forEach(t => {
-    equity += (t.profitLoss ?? 0) - (t.fees ?? 0);
+    equity += getNetPnl(t) ?? 0;
     if (equity > peak) {
       if (ddStart && !recoveryDate) recoveryDate = dateStr(t.closedAt!);
       peak = equity;
@@ -535,7 +535,7 @@ export function getRRAnalysis(trades: Trade[]): RRAnalysis {
   }).filter(s => s.count > 0);
 
   const byDayOfWeek = [1,2,3,4,5].map(day => {
-    const dt = closed.filter(t => new Date(t.openedAt).getUTCDay() === day);
+    const dt = closed.filter(t => getTradingDateParts(t.openedAt).dayOfWeek === day);
     return {
       day,
       label: ['', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه'][day],

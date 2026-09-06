@@ -5,6 +5,7 @@
  */
 import { db } from '../db/database';
 import { isWin, isLoss } from '../lib/tradeHelpers';
+import { getTradingDateParts } from '../lib/tradingTime';
 
 export type InsightSeverity = 'critical' | 'warning' | 'positive' | 'info';
 
@@ -47,7 +48,7 @@ export const insightsService = {
     // ── ۱. تحلیل ساعت معاملاتی ────────────────────────────────────────
     const byHour: Record<number, { wins: number; losses: number }> = {};
     allTrades.forEach(t => {
-      const h = new Date(t.openedAt).getHours();
+      const h = getTradingDateParts(t.openedAt).hour;
       if (!byHour[h]) byHour[h] = { wins: 0, losses: 0 };
       if (t.result === 'win' || t.result === 'partial-win') byHour[h].wins++;
       if (t.result === 'loss' || t.result === 'partial-loss') byHour[h].losses++;
@@ -95,7 +96,7 @@ export const insightsService = {
     // ── ۲. تحلیل روز هفته ────────────────────────────────────────────
     const byDay: Record<number, { wins: number; losses: number }> = {};
     allTrades.forEach(t => {
-      const d = new Date(t.openedAt).getDay();
+      const d = getTradingDateParts(t.openedAt).dayOfWeek;
       if (!byDay[d]) byDay[d] = { wins: 0, losses: 0 };
       if (t.result === 'win' || t.result === 'partial-win') byDay[d].wins++;
       if (t.result === 'loss' || t.result === 'partial-loss') byDay[d].losses++;

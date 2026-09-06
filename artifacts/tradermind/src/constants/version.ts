@@ -12,11 +12,11 @@
  *  - BACKUP_FORMAT_VERSION: فقط با تغییر ساختار فایل پشتیبان افزایش پیدا می‌کند
  */
 
-export const APP_VERSION = '1.2.0';
-export const DB_VERSION = 21;
+export const APP_VERSION = '1.4.2';
+export const DB_VERSION = 23;
 export const BACKUP_FORMAT_VERSION = '3.0';
 /** نسخه Schema برای فایل‌های پشتیبان */
-export const SCHEMA_VERSION = 21;
+export const SCHEMA_VERSION = 23;
 
 /** نام کامل برنامه برای نمایش به کاربر */
 export const APP_NAME = 'TraderMind';

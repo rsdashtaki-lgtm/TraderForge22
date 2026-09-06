@@ -40,10 +40,13 @@ export interface Rule {
   stepId: string;
   title: string;
   description: string;
-  type: 'checkbox' | 'text' | 'textarea' | 'number' | 'select' | 'multi-select' | 'date' | 'image';
+  type: 'checkbox' | 'text' | 'textarea' | 'number' | 'select' | 'multi-select' | 'date' | 'image' | 'conditional';
   required: boolean;
   order: number;
   options: string; // JSON string[]
+  /** متن شرط و اقدام برای Ruleهای «اگر… آنگاه…» */
+  condition?: string;
+  action?: string;
 }
 
 export interface Step {
@@ -93,6 +96,8 @@ export interface Trade {
   result: 'win' | 'loss' | 'breakeven' | 'partial-win' | 'partial-loss' | 'open' | 'cancelled';
   profitLoss: number | null;
   fees: number | null;
+  commission?: number | null;   // کمیسیون جدا از سایر هزینه‌ها
+  spread?: number | null;       // هزینه اسپرد به واحد ارز حساب
   status: 'open' | 'closed' | 'cancelled';
   openedAt: number;
   closedAt: number | null;
@@ -134,9 +139,21 @@ export interface Trade {
   managementReason: string | null;
   // Multi-timeframe analysis (JSON MTFAnalysis)
   mtfAnalysis: string | null;
+  // Briefing پیش از معامله، قابل ویرایش و ذخیره در backup
+  preTradeBriefing?: string | null;
 }
 
 /** ── Multi-Timeframe Analysis ─────────────────────────────────────── */
+export interface MTFScenario {
+  id: string;
+  direction: 'long' | 'short' | 'both';
+  timeframe: string;
+  trigger: string;
+  invalidation: string;
+  action: string;
+  enabled: boolean;
+}
+
 export interface MTFTimeframeAnalysis {
   screenshotId: string | null;
   bias: string;
@@ -152,6 +169,7 @@ export interface MTFAnalysis {
   '15M': MTFTimeframeAnalysis;
   '5M': MTFTimeframeAnalysis;
   '1M': MTFTimeframeAnalysis;
+  scenarios?: MTFScenario[];
 }
 
 export const defaultMTFTimeframe: MTFTimeframeAnalysis = {
@@ -917,6 +935,7 @@ export interface Account {
 
 export interface TradingBox {
   id: string;
+  accountId?: string | null;       // باکس اختصاصی یک حساب؛ null یعنی مشترک
   name: string;               // مثلاً «باکس ۱» یا «آزمون استراتژی بهار»
   description: string | null;
   targetTradeCount: number | null;  // هدف تعداد معاملات
@@ -1428,6 +1447,40 @@ class TraderMindDB extends Dexie {
       screenshotCollections: 'id, name, isDefault, createdAt',
       accounts: 'id, name, isDefault, createdAt',
       tradingBoxes: 'id, name, status, createdAt',
+    });
+
+    // نسخه ۲۲ — تفکیک کمیسیون/اسپرد و اتصال اختیاری باکس به حساب
+    this.version(22).stores({
+      trades: [
+        'id', 'sessionId', 'strategyId', 'accountId', 'boxId',
+        'symbol', 'direction', 'result', 'status', 'openedAt', 'closedAt',
+        '[symbol+openedAt]', '[accountId+openedAt]', '[strategyId+result]', '[strategyId+closedAt]',
+      ].join(', '),
+      tradingBoxes: 'id, name, status, accountId, createdAt',
+    }).upgrade(async tx => {
+      await tx.table('trades').toCollection().modify((trade: Trade) => {
+        if (trade.commission === undefined) trade.commission = null;
+        if (trade.spread === undefined) trade.spread = null;
+      });
+      await tx.table('tradingBoxes').toCollection().modify((box: TradingBox) => {
+        if (box.accountId === undefined) box.accountId = null;
+      });
+    });
+
+    // نسخه ۲۳ — briefing پیش از معامله و سناریوهای شرطی MTF
+    // این فیلدها در IndexedDB ایندکس نمی‌شوند و فقط برای داده‌های قدیمی
+    // مقدار پیش‌فرض می‌گیرند تا restore و migration کاملاً backward-compatible بماند.
+    this.version(23).stores({
+      trades: [
+        'id', 'sessionId', 'strategyId', 'accountId', 'boxId',
+        'symbol', 'direction', 'result', 'status', 'openedAt', 'closedAt',
+        '[symbol+openedAt]', '[accountId+openedAt]', '[strategyId+result]', '[strategyId+closedAt]',
+      ].join(', '),
+      tradingBoxes: 'id, name, status, accountId, createdAt',
+    }).upgrade(async tx => {
+      await tx.table('trades').toCollection().modify((trade: Trade) => {
+        if (trade.preTradeBriefing === undefined) trade.preTradeBriefing = null;
+      });
     });
   }
 }

@@ -31,6 +31,9 @@ import {
 } from "lucide-react";
 import { formatDateFa } from "../lib/i18n";
 import { getByDay, getBySession } from "../services/performanceService";
+import { useAppStore } from "../store/useAppStore";
+import { getTradingDateKey, getTradingDateRange, getTradingMonthKey } from "../lib/tradingTime";
+import { getNetPnl } from "../lib/tradeHelpers";
 
 // ══════════════════════════════════════════════════════════════════
 // ثوابت و نوع‌ها
@@ -92,7 +95,7 @@ function getGreetingSub(): string {
 }
 
 function todayStr(): string {
-  return new Date().toISOString().split("T")[0];
+  return getTradingDateKey(Date.now());
 }
 
 function moodLabel(v: number): string {
@@ -165,6 +168,9 @@ async function loadDashboardData(): Promise<DashboardData> {
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
+  const tradingTimeMode = useAppStore(s => s.tradingTimeMode);
+  const brokerUtcOffsetMinutes = useAppStore(s => s.brokerUtcOffsetMinutes);
+  const dashboardMessage = useAppStore(s => s.dashboardMessage);
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [rangeKey, setRangeKey] = useState<RangeKey>("week");
@@ -192,20 +198,20 @@ export default function Dashboard() {
   const rangedTrades = useMemo(() => {
     if (!data) return [];
     if (rangeKey === "custom") {
-      const from = new Date(customFrom + "T00:00:00").getTime();
-      const to   = new Date(customTo   + "T23:59:59").getTime();
+      const from = getTradingDateRange(customFrom).from;
+      const to   = getTradingDateRange(customTo).to;
       return filterTradesByRange(data.trades, from, to);
     }
     const { from, to } = getDateRange(rangeKey);
     return filterTradesByRange(data.trades, from, to);
-  }, [data, rangeKey, customFrom, customTo]);
+  }, [data, rangeKey, customFrom, customTo, tradingTimeMode, brokerUtcOffsetMinutes]);
 
   // ── Stats بازه انتخابی
   const rangedStats = useMemo(() => {
     const closed = rangedTrades.filter(t => t.status === "closed");
     const wins = closed.filter(t => t.result === "win" || t.result === "partial-win");
     const withR = closed.filter(t => t.rMultiple != null);
-    const totalPnl = closed.reduce((s, t) => s + (t.profitLoss || 0), 0);
+    const totalPnl = closed.reduce((s, t) => s + (getNetPnl(t) ?? 0), 0);
     return {
       total: rangedTrades.length,
       winRate: closed.length > 0 ? (wins.length / closed.length) * 100 : 0,
@@ -235,10 +241,11 @@ export default function Dashboard() {
       .slice(-20);
     let cum = 0;
     return closed.map((t, i) => {
-      cum += t.profitLoss || 0;
-      return { index: i + 1, symbol: t.symbol, pnl: +(t.profitLoss || 0).toFixed(2), cumulative: +cum.toFixed(2) };
+      const pnl = getNetPnl(t) ?? 0;
+      cum += pnl;
+      return { index: i + 1, symbol: t.symbol, pnl: +pnl.toFixed(2), cumulative: +cum.toFixed(2) };
     });
-  }, [data]);
+  }, [data, tradingTimeMode, brokerUtcOffsetMinutes]);
 
   // ── Insights (فقط اگه داده کافی باشه)
   const insights = useMemo((): InsightCard[] => {
@@ -283,8 +290,8 @@ export default function Dashboard() {
     const closed = prevTrades.filter(t => t.status === "closed");
     const wins = closed.filter(t => t.result === "win" || t.result === "partial-win");
     const losses = closed.filter(t => t.result === "loss" || t.result === "partial-loss");
-    const totalWinPnl = wins.reduce((s, t) => s + Math.max(0, t.profitLoss ?? 0), 0);
-    const totalLossPnl = Math.abs(losses.reduce((s, t) => s + Math.min(0, t.profitLoss ?? 0), 0));
+    const totalWinPnl = wins.reduce((s, t) => s + Math.max(0, getNetPnl(t) ?? 0), 0);
+    const totalLossPnl = Math.abs(losses.reduce((s, t) => s + Math.min(0, getNetPnl(t) ?? 0), 0));
     const withR = closed.filter(t => t.rMultiple != null);
     const winRs = wins.filter(t => t.rMultiple != null).map(t => t.rMultiple!);
     const lossRs = losses.filter(t => t.rMultiple != null).map(t => Math.abs(t.rMultiple!));
@@ -293,7 +300,7 @@ export default function Dashboard() {
     return {
       closedCount: closed.length,
       winRate: closed.length > 0 ? (wins.length / closed.length) * 100 : 0,
-      totalPnl: closed.reduce((s, t) => s + (t.profitLoss ?? 0), 0),
+      totalPnl: closed.reduce((s, t) => s + (getNetPnl(t) ?? 0), 0),
       avgR: withR.length ? withR.reduce((s, t) => s + (t.rMultiple ?? 0), 0) / withR.length : null,
       profitFactor: totalLossPnl > 0 ? totalWinPnl / totalLossPnl : null,
       avgWinPnl: wins.length ? totalWinPnl / wins.length : null,
@@ -308,13 +315,13 @@ export default function Dashboard() {
     if (!closed.length) return null;
     const wins   = closed.filter(t => t.result === "win" || t.result === "partial-win");
     const losses = closed.filter(t => t.result === "loss" || t.result === "partial-loss");
-    const totalWinPnl  = wins.reduce((s, t) => s + Math.max(0, t.profitLoss ?? 0), 0);
-    const totalLossPnl = Math.abs(losses.reduce((s, t) => s + Math.min(0, t.profitLoss ?? 0), 0));
+    const totalWinPnl  = wins.reduce((s, t) => s + Math.max(0, getNetPnl(t) ?? 0), 0);
+    const totalLossPnl = Math.abs(losses.reduce((s, t) => s + Math.min(0, getNetPnl(t) ?? 0), 0));
     const winRs  = wins.filter(t => t.rMultiple != null).map(t => t.rMultiple!);
     const lossRs = losses.filter(t => t.rMultiple != null).map(t => Math.abs(t.rMultiple!));
     const avgWinR  = winRs.length  ? winRs.reduce((s, v) => s + v, 0)  / winRs.length  : null;
     const avgLossR = lossRs.length ? lossRs.reduce((s, v) => s + v, 0) / lossRs.length : null;
-    const pnls = closed.map(t => t.profitLoss ?? 0);
+    const pnls = closed.map(t => getNetPnl(t) ?? 0);
     return {
       bestPnl:      Math.max(...pnls),
       worstPnl:     Math.min(...pnls),
@@ -333,8 +340,8 @@ export default function Dashboard() {
     // ماهانه P/L
     const monthMap = new Map<string, number>();
     allClosed.forEach(t => {
-      const key = new Date(t.closedAt ?? t.openedAt).toISOString().slice(0, 7);
-      monthMap.set(key, (monthMap.get(key) ?? 0) + (t.profitLoss ?? 0));
+      const key = getTradingMonthKey(t.closedAt ?? t.openedAt);
+      monthMap.set(key, (monthMap.get(key) ?? 0) + (getNetPnl(t) ?? 0));
     });
     const FA_MONTHS = ["ژانویه","فوریه","مارس","آوریل","مه","ژوئن","ژوئیه","آگوست","سپتامبر","اکتبر","نوامبر","دسامبر"];
     const monthlyPnl = [...monthMap.entries()]
@@ -382,7 +389,7 @@ export default function Dashboard() {
       .slice(0, 7);
 
     return { monthlyPnl, dayData, sessionData, strategyData };
-  }, [data]);
+  }, [data, tradingTimeMode, brokerUtcOffsetMinutes]);
 
   // ── وضعیت: کاربر جدید؟
   const isNewUser = data && data.strategies.length === 0 && data.trades.length === 0 && data.journals.length === 0;
@@ -484,7 +491,7 @@ export default function Dashboard() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{getGreeting()} 👋</h1>
-          <p className="text-muted-foreground mt-1">{getGreetingSub()}</p>
+          <p className="text-muted-foreground mt-1">{dashboardMessage || getGreetingSub()}</p>
         </div>
         {/* دکمه‌های اصلی */}
         <div className="flex gap-2 shrink-0">
@@ -790,7 +797,7 @@ export default function Dashboard() {
               const accTrades = (data?.trades ?? []).filter((t: any) => t.accountId === acc.id);
               const closed = accTrades.filter(t => t.status === 'closed');
               const wins = closed.filter(t => t.result === 'win' || t.result === 'partial-win');
-              const pnl = closed.reduce((s, t) => s + (t.profitLoss || 0), 0);
+              const pnl = closed.reduce((s, t) => s + (getNetPnl(t) ?? 0), 0);
               const winRate = closed.length > 0 ? Math.round((wins.length / closed.length) * 100) : null;
               return (
                 <Link key={acc.id} href={`/journal/trades?accountId=${acc.id}`}>
@@ -799,8 +806,8 @@ export default function Dashboard() {
                       <CreditCard className="w-4 h-4" style={{ color: acc.color }} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm truncate">{acc.name}</p>
-                      <p className="text-xs text-muted-foreground">{acc.broker || 'بدون بروکر'} · {accTrades.length} معامله</p>
+                      <p className="font-semibold text-sm whitespace-normal break-words leading-5" dir="rtl">{acc.name}</p>
+                      <p className="text-xs text-muted-foreground whitespace-normal break-words leading-5" dir="rtl">{acc.broker || 'بدون بروکر'} · {accTrades.length} معامله</p>
                     </div>
                     <div className="text-right shrink-0">
                       <p className={`text-sm font-bold ${pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
@@ -834,7 +841,7 @@ export default function Dashboard() {
               const boxTrades = (data?.trades ?? []).filter((t: any) => t.boxId === box.id);
               const closed = boxTrades.filter(t => t.status === 'closed');
               const wins = closed.filter(t => t.result === 'win' || t.result === 'partial-win');
-              const pnl = closed.reduce((s, t) => s + (t.profitLoss || 0), 0);
+              const pnl = closed.reduce((s, t) => s + (getNetPnl(t) ?? 0), 0);
               const targetCount = box.targetTradeCount || 0;
               const progress = targetCount > 0 ? Math.min(100, Math.round((boxTrades.length / targetCount) * 100)) : null;
               const winRate = closed.length > 0 ? Math.round((wins.length / closed.length) * 100) : null;
@@ -907,8 +914,8 @@ export default function Dashboard() {
                       </div>
                       <div className="text-right shrink-0">
                         <p className={`font-semibold text-sm ${RESULT_CLS[trade.result] ?? ""}`}>
-                          {trade.profitLoss != null
-                            ? `${trade.profitLoss >= 0 ? "+" : ""}$${Math.abs(trade.profitLoss).toFixed(2)}`
+                          {getNetPnl(trade) != null
+                            ? `${getNetPnl(trade)! >= 0 ? "+" : ""}$${Math.abs(getNetPnl(trade)!).toFixed(2)}`
                             : RESULT_FA[trade.result] ?? trade.result}
                         </p>
                         {trade.rMultiple != null && (

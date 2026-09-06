@@ -6,7 +6,7 @@ import { AnalysisSession, Strategy } from "../db/database";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Skeleton } from "../components/ui/skeleton";
-import { PlusCircle, PlayCircle, Clock, CheckCircle2, XCircle, AlertCircle, RefreshCw } from "lucide-react";
+import { PlusCircle, PlayCircle, Clock, CheckCircle2, XCircle, AlertCircle, RefreshCw, Trash2 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { formatDateFa } from "../lib/i18n";
 
@@ -45,6 +45,12 @@ export default function AnalysisList() {
     strategies.find(s => s.id === id)?.name || 'استراتژی نامشخص',
     [strategies]
   );
+
+  const handleDelete = async (session: AnalysisSession) => {
+    if (!window.confirm('این جلسه تحلیل حذف شود؟ این کار قابل بازگشت نیست.')) return;
+    await analysisService.deleteSession(session.id);
+    setSessions(current => current.filter(item => item.id !== session.id));
+  };
 
   // ── Skeleton Loading ──
   if (loading) {
@@ -133,12 +139,21 @@ export default function AnalysisList() {
                       </div>
                     </div>
                   </div>
-                  <div className="shrink-0">
-                    <Link href={`/analysis/${session.id}`}>
-                      <Button variant={isActive ? 'default' : 'secondary'} size="sm">
-                        {isActive ? 'ادامه' : 'مشاهده'}
-                      </Button>
-                    </Link>
+                   <div className="shrink-0 flex items-center gap-1">
+                     <Link href={`/analysis/${session.id}`}>
+                       <Button variant={isActive ? 'default' : 'secondary'} size="sm">
+                         {isActive ? 'ادامه' : 'مشاهده'}
+                       </Button>
+                     </Link>
+                     <Button
+                       variant="ghost"
+                       size="icon"
+                       className="text-muted-foreground hover:text-destructive"
+                       onClick={() => void handleDelete(session)}
+                       aria-label="حذف جلسه تحلیل"
+                     >
+                       <Trash2 className="h-4 w-4" />
+                     </Button>
                   </div>
                 </CardContent>
               </Card>

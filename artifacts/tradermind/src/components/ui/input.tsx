@@ -1,61 +1,48 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
+import { captureInputSelection, restoreInputSelection } from '@/lib/inputSelection';
 
-const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<'input'>>(
-  ({ className, type, onChange, value, ...props }, ref) => {
-    const internalRef = React.useRef<HTMLInputElement>(null);
-    const selRef = React.useRef<{ start: number; end: number } | null>(null);
+export interface InputProps extends React.ComponentProps<'input'> {
+}
 
-    // Merge external ref with our internal ref
-    const setRef = React.useCallback(
-      (node: HTMLInputElement | null) => {
-        internalRef.current = node;
-        if (typeof ref === 'function') ref(node);
-        else if (ref) (ref as React.MutableRefObject<HTMLInputElement | null>).current = node;
-      },
-      [ref],
-    );
+const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ className, type, inputMode, autoCorrect, spellCheck, onChange, ...props }, ref) => {
+    const resolvedType = type ?? 'text';
+    const isTextInput = resolvedType === 'text';
+    const preserveCaret = ['text', 'search', 'tel', 'url', 'email', 'password'].includes(resolvedType);
 
-    // After every render, restore cursor if we saved a position from onChange
-    React.useLayoutEffect(() => {
-      const el = internalRef.current;
-      const sel = selRef.current;
-      selRef.current = null;
-      if (el && sel !== null && document.activeElement === el) {
-        try {
-          el.setSelectionRange(sel.start, sel.end);
-        } catch {
-          // setSelectionRange throws for input types like number/date/range — ignore
-        }
-      }
-    });
-
-    const handleChange = onChange
-      ? (e: React.ChangeEvent<HTMLInputElement>) => {
-          // Save cursor position BEFORE calling onChange (which triggers re-render)
-          selRef.current = {
-            start: e.target.selectionStart ?? 0,
-            end: e.target.selectionEnd ?? 0,
-          };
-          onChange(e);
-        }
-      : undefined;
+    const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+      // React normally keeps the caret stable, but Android WebView + RTL controlled
+      // inputs can move it to the end after each parent re-render. Capture the
+      // browser's selection before notifying the controlled value owner and restore
+      // it after React has committed the new value.
+      const target = event.currentTarget;
+       const selection = captureInputSelection(target);
+      onChange?.(event);
+       if (!preserveCaret || selection.start === null || selection.end === null) return;
+      requestAnimationFrame(() => {
+        if (document.activeElement !== target) return;
+         restoreInputSelection(target, selection);
+      });
+    };
 
     return (
-      <input
-        type={type}
-        className={cn(
-          'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm',
-          className,
-        )}
-        ref={setRef}
-        value={value}
-        onChange={handleChange}
-        {...props}
-      />
+    <input
+      type={resolvedType}
+      inputMode={inputMode ?? (isTextInput ? 'text' : undefined)}
+      autoCorrect={autoCorrect ?? (isTextInput ? 'on' : undefined)}
+      spellCheck={spellCheck ?? (isTextInput ? true : undefined)}
+      className={cn(
+        'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm',
+        className,
+      )}
+      ref={ref}
+      onChange={handleChange}
+      {...props}
+    />
     );
   },
 );
-Input.displayName = 'Input';
 
+Input.displayName = 'Input';
 export { Input };

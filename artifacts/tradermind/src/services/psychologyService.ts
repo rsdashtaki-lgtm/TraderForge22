@@ -19,6 +19,7 @@ import {
   isClosed, isWin,
   getPTR, flagCount,
 } from '../lib/tradeHelpers';
+import { getTradingMonthKey } from '../lib/tradingTime';
 
 // ── ۱. تحلیل عملکرد ذهنی ─────────────────────────────────────────────────
 
@@ -224,7 +225,7 @@ export function analyzeRecurringMistakeTrends(allTrades: Trade[]): MistakeTrend[
     const byMonth = new Map<string, number>();
     trades.forEach(t => {
       if (checkPatternMatch(pattern.id, t)) {
-        const m = new Date(t.openedAt).toISOString().slice(0, 7);
+        const m = getTradingMonthKey(t.openedAt);
         byMonth.set(m, (byMonth.get(m) ?? 0) + 1);
       }
     });

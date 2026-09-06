@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 import { t, formatDateFullFa, toDateStr } from "../lib/i18n";
 import { cn } from "../lib/utils";
+import { useNavigationGuard } from "../navigation/NavigationGuard";
 
 // ================================================================
 // کامپوننت‌های کمکی
@@ -245,6 +246,7 @@ export default function DailyEntry() {
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [existingId, setExistingId] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedFormRef = useRef<FormData | null>(null);
 
   // بارگذاری اطلاعات
   useEffect(() => {
@@ -256,7 +258,10 @@ export default function DailyEntry() {
       ]);
       if (existing) {
         setForm(journalToForm(existing));
+        lastSavedFormRef.current = journalToForm(existing);
         setExistingId(existing.id);
+      } else {
+        lastSavedFormRef.current = defaultForm;
       }
       setTrades(dayTrades);
       setHasLoaded(true);
@@ -270,6 +275,7 @@ export default function DailyEntry() {
     setIsSaving(true);
     try {
       const saved = await journalService.saveJournal(formToJournal(formData, date));
+      lastSavedFormRef.current = formData;
       setExistingId(saved.id);
       setLastSaved(new Date().toLocaleTimeString('fa-IR'));
       if (!silent) toast.success(t.common.savedSuccess);
@@ -279,6 +285,11 @@ export default function DailyEntry() {
       setIsSaving(false);
     }
   }, [date]);
+
+  useNavigationGuard({
+    isDirty: hasLoaded && JSON.stringify(form) !== JSON.stringify(lastSavedFormRef.current),
+    onSave: async () => { await saveJournal(form, false); },
+  });
 
   // Autosave
   useEffect(() => {

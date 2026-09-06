@@ -37,6 +37,7 @@ import {
   RefreshCw, Target, Shield,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import StoredImage from '../components/StoredImage';
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -651,9 +652,12 @@ export default function LiveTrade() {
                         {event.timeframe && <span>تایم‌فریم: {event.timeframe}</span>}
                       </div>
                       {event.screenshotDataUrl && (
-                        <img
-                          src={event.screenshotDataUrl}
+                        <StoredImage
+                          source={event.screenshotDataUrl}
                           alt="اسکرین‌شات"
+                          enableViewer
+                          showDownload
+                          filename="trade-event-screenshot"
                           className="max-h-40 rounded-lg object-contain border mt-2"
                         />
                       )}
@@ -1069,7 +1073,14 @@ export default function LiveTrade() {
               <div>
                 {eventScreenshot ? (
                   <div className="relative inline-block">
-                    <img src={eventScreenshot} alt="preview" className="max-h-32 rounded-lg border object-contain" />
+                    <StoredImage
+                      source={eventScreenshot}
+                      alt="preview"
+                      enableViewer
+                      showDownload
+                      filename="trade-event-screenshot"
+                      className="max-h-32 rounded-lg border object-contain"
+                    />
                     <Button
                       variant="ghost" size="icon"
                       className="absolute top-1 right-1 h-6 w-6 bg-background/80"

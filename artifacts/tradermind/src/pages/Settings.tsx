@@ -6,23 +6,29 @@ import { securityService } from "../security/securityService";
 import { backupService } from "../services/backupService";
 import { DB_VERSION, APP_VERSION } from "../services/backupService";
 import { storageMonitorService, formatBytes, type StorageInfo } from "../services/storageService";
+import { accountService } from "../services/accountService";
+import { tradingBoxService } from "../services/tradingBoxService";
+import type { Account, TradingBox } from "../db/database";
 import { SecuritySetupDialog } from "../components/SecuritySetupDialog";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
+import { Textarea } from "../components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { useLocation } from "wouter";
 import {
-  Moon, Sun, Monitor, Type, Globe, Activity, BookOpen,
+  Moon, Sun, Monitor, Type, Palette, Globe, Activity, BookOpen, Clock,
   LayoutDashboard, HardDrive, Info, Database, Trash2,
   Plus, X, Download, Upload, WifiOff, ShieldCheck, Lock, LockOpen,
-  Bell, RefreshCw, Smile, KeyRound, Eye, EyeOff, CheckCircle2, AlertTriangle
+  Bell, RefreshCw, Smile, KeyRound, Eye, EyeOff, CheckCircle2, AlertTriangle, SlidersHorizontal
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "../lib/utils";
 import { t } from "../lib/i18n";
+import { formatTradingOffset } from "../lib/tradingTime";
 
 // ─────────────────────────────────────────────
 // کامپوننت‌های کمکی
@@ -378,7 +384,7 @@ export default function Settings() {
   // PART 8 / Prompt 3 — selector برای جلوگیری از re-render غیرضروری
   const store = useAppStore(
     useShallow(s => ({
-      theme: s.theme, fontSize: s.fontSize,
+       theme: s.theme, fontSize: s.fontSize, colorTheme: s.colorTheme, textColor: s.textColor,
       analysisAutosave: s.analysisAutosave, analysisShowNextStep: s.analysisShowNextStep,
       analysisPhaseSummary: s.analysisPhaseSummary, analysisConfirmPhase: s.analysisConfirmPhase,
       analysisProgressBar: s.analysisProgressBar,
@@ -388,8 +394,13 @@ export default function Settings() {
       dashShowPnl: s.dashShowPnl, dashShowAvgR: s.dashShowAvgR,
       dashShowRecentTrades: s.dashShowRecentTrades, dashShowLastJournal: s.dashShowLastJournal,
       dashShowAdherence: s.dashShowAdherence,
+       dashboardMessage: s.dashboardMessage,
+      defaultAccountId: s.defaultAccountId, defaultTradingBoxId: s.defaultTradingBoxId,
+      defaultSymbol: s.defaultSymbol, defaultMarket: s.defaultMarket,
+      tradingTimeMode: s.tradingTimeMode, brokerUtcOffsetMinutes: s.brokerUtcOffsetMinutes,
       // setters
-      setTheme: s.setTheme, setFontSize: s.setFontSize,
+       setTheme: s.setTheme, setFontSize: s.setFontSize,
+       setColorTheme: s.setColorTheme, setTextColor: s.setTextColor,
       setAnalysisAutosave: s.setAnalysisAutosave, setAnalysisShowNextStep: s.setAnalysisShowNextStep,
       setAnalysisPhaseSummary: s.setAnalysisPhaseSummary, setAnalysisConfirmPhase: s.setAnalysisConfirmPhase,
       setAnalysisProgressBar: s.setAnalysisProgressBar,
@@ -400,6 +411,10 @@ export default function Settings() {
       setDashShowPnl: s.setDashShowPnl, setDashShowAvgR: s.setDashShowAvgR,
       setDashShowRecentTrades: s.setDashShowRecentTrades, setDashShowLastJournal: s.setDashShowLastJournal,
       setDashShowAdherence: s.setDashShowAdherence,
+       setDashboardMessage: s.setDashboardMessage,
+      setDefaultAccountId: s.setDefaultAccountId, setDefaultTradingBoxId: s.setDefaultTradingBoxId,
+      setDefaultSymbol: s.setDefaultSymbol, setDefaultMarket: s.setDefaultMarket,
+      setTradingTimeMode: s.setTradingTimeMode, setBrokerUtcOffsetMinutes: s.setBrokerUtcOffsetMinutes,
       resetToDefaults: s.resetToDefaults,
     }))
   );
@@ -407,6 +422,17 @@ export default function Settings() {
   const [storageSize, setStorageSize] = useState(0);
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
   const [screenshotEstimate, setScreenshotEstimate] = useState<{ count: number; estimatedBytes: number } | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [tradingBoxes, setTradingBoxes] = useState<TradingBox[]>([]);
+  const deviceUtcOffsetMinutes = -new Date().getTimezoneOffset();
+  const brokerDeviceDifferenceMinutes = store.brokerUtcOffsetMinutes - deviceUtcOffsetMinutes;
+  const brokerDeviceDifferenceOptions = Array.from(
+    { length: 209 },
+    (_, index) => (index - 104) * 15,
+  ).filter(difference => {
+    const brokerOffset = deviceUtcOffsetMinutes + difference;
+    return brokerOffset >= -720 && brokerOffset <= 840;
+  });
 
   const refreshStorageInfo = useCallback(async () => {
     const [info, est] = await Promise.all([
@@ -419,6 +445,16 @@ export default function Settings() {
   }, []);
 
   useEffect(() => { refreshStorageInfo(); }, [refreshStorageInfo]);
+  useEffect(() => {
+    void Promise.all([accountService.getAll(), tradingBoxService.getAll()])
+      .then(([loadedAccounts, loadedBoxes]) => {
+        setAccounts(loadedAccounts);
+        setTradingBoxes(loadedBoxes);
+      })
+      .catch(() => {
+        toast.error('بارگذاری حساب‌ها و باکس‌های معاملاتی انجام نشد');
+      });
+  }, []);
 
   // ── حذف داده‌ها (۳ مرحله‌ای)
   const [deleteStep, setDeleteStep] = useState<0 | 1 | 2>(0);
@@ -472,15 +508,19 @@ export default function Settings() {
         </div>
         <div>
           <p className="text-sm font-medium mb-2">{t.settings.fontSize}</p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
             {[
+              { value: 'xs', label: 'خیلی کوچک', cls: 'text-xs' },
               { value: 'sm', label: t.settings.fontSizeSm, cls: 'text-xs' },
               { value: 'md', label: t.settings.fontSizeMd, cls: 'text-sm' },
               { value: 'lg', label: t.settings.fontSizeLg, cls: 'text-base' },
+              { value: 'xl', label: 'خیلی بزرگ', cls: 'text-lg' },
             ].map(({ value, label, cls }) => (
               <button key={value} onClick={() => store.setFontSize(value as any)}
                 className={cn(
-                  'flex items-center justify-center gap-1.5 py-2.5 rounded-lg border-2 font-medium transition-all', cls,
+                  'flex items-center justify-center gap-1.5 py-2.5 rounded-lg border-2 font-medium transition-all',
+                  value === 'xl' && 'col-span-2 sm:col-span-1',
+                  cls,
                   store.fontSize === value
                     ? 'border-primary bg-primary/10 text-primary'
                     : 'border-border hover:border-primary/40 text-muted-foreground'
@@ -488,6 +528,74 @@ export default function Settings() {
                 <Type className="w-3.5 h-3.5" />{label}
               </button>
             ))}
+          </div>
+        </div>
+        <div>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <p className="text-sm font-medium">رنگ اصلی برنامه</p>
+              <p className="text-xs text-muted-foreground mt-0.5">رنگ دکمه‌ها، لینک‌ها، نمودارها و وضعیت فعال منو</p>
+            </div>
+            <Palette className="w-4 h-4 text-primary shrink-0" />
+          </div>
+          <div className="grid grid-cols-5 gap-2">
+            {[
+              { value: 'blue', label: 'آبی', color: '#3b82f6' },
+              { value: 'violet', label: 'بنفش', color: '#8b5cf6' },
+              { value: 'emerald', label: 'سبز', color: '#10b981' },
+              { value: 'amber', label: 'کهربایی', color: '#f59e0b' },
+              { value: 'rose', label: 'رز', color: '#f43f5e' },
+            ].map(({ value, label, color }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => store.setColorTheme(value as any)}
+                className={cn(
+                  'flex flex-col items-center gap-1.5 rounded-lg border-2 p-2 text-xs font-medium transition-all',
+                  store.colorTheme === value
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'border-border hover:border-primary/40 text-muted-foreground'
+                )}
+                aria-label={`انتخاب رنگ ${label}`}
+              >
+                <span className="h-6 w-6 rounded-full border border-white/20 shadow-sm" style={{ backgroundColor: color }} />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">رنگ متن برنامه</p>
+              <p className="text-xs text-muted-foreground mt-0.5">برای خوانایی بهتر متن‌ها را در حالت تاریک روشن‌تر کنید</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={store.textColor === 'auto' ? (store.theme === 'light' ? '#1a202c' : '#e2e8f0') : store.textColor}
+                onChange={e => store.setTextColor(e.target.value as `#${string}`)}
+                className="h-9 w-12 cursor-pointer rounded-md border border-border bg-transparent p-1"
+                aria-label="انتخاب رنگ متن"
+              />
+              <button
+                type="button"
+                onClick={() => store.setTextColor('auto')}
+                className={cn(
+                  'rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors',
+                  store.textColor === 'auto'
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border text-muted-foreground hover:border-primary/40'
+                )}
+              >
+                خودکار
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="h-3 w-3 rounded-full border border-border" style={{ backgroundColor: store.textColor === 'auto' ? 'hsl(var(--foreground))' : store.textColor }} />
+            <span className="text-sm">نمونه متن اصلی</span>
+            <span className="text-xs text-muted-foreground">متن کمکی برای بررسی کنتراست</span>
           </div>
         </div>
       </Section>
@@ -506,6 +614,128 @@ export default function Settings() {
       <SecuritySection />
 
       {/* ── ۴. تنظیمات تحلیل */}
+      <Section icon={SlidersHorizontal} title="پیش‌فرض‌های ثبت معامله" description="این مقادیر هنگام ایجاد معامله جدید به‌صورت خودکار انتخاب می‌شوند.">
+        <SettingRow label="حساب معاملاتی" description="حسابی که معمولاً با آن معامله می‌کنید">
+          <Select
+            value={store.defaultAccountId ?? 'none'}
+            onValueChange={value => store.setDefaultAccountId(value === 'none' ? null : value)}
+          >
+            <SelectTrigger className="w-44"><SelectValue placeholder="بدون پیش‌فرض" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">بدون پیش‌فرض</SelectItem>
+              {accounts.map(account => <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingRow>
+        <SettingRow label="باکس معاملاتی" description="باکسی که معامله جدید در آن قرار می‌گیرد">
+          <Select
+            value={store.defaultTradingBoxId ?? 'none'}
+            onValueChange={value => store.setDefaultTradingBoxId(value === 'none' ? null : value)}
+          >
+            <SelectTrigger className="w-44"><SelectValue placeholder="بدون پیش‌فرض" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">بدون پیش‌فرض</SelectItem>
+              {tradingBoxes.map(box => <SelectItem key={box.id} value={box.id}>{box.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingRow>
+        <SettingRow label="نماد معاملاتی" description="نماد اولیه فرم ثبت معامله">
+          <Input
+            value={store.defaultSymbol}
+            onChange={e => store.setDefaultSymbol(e.target.value.toUpperCase())}
+            className="w-44 uppercase"
+            dir="ltr"
+            placeholder="XAUUSD"
+          />
+        </SettingRow>
+        <SettingRow label="بازار" description="بازار اولیه فرم ثبت معامله">
+          <Select value={store.defaultMarket} onValueChange={store.setDefaultMarket}>
+            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {[
+                ['Forex', 'فارکس'],
+                ['Crypto', 'ارز دیجیتال'],
+                ['Indices', 'شاخص‌ها'],
+                ['Stocks', 'سهام'],
+                ['Commodities', 'کالاها'],
+                ['Other', 'سایر'],
+              ].map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingRow>
+        <SettingRow
+          label="مبنای ساعت معاملات"
+          description="گزارش‌ها و تحلیل ساعت/روز بر اساس این مبنا دسته‌بندی می‌شوند"
+        >
+          <Select
+            value={store.tradingTimeMode}
+            onValueChange={value => store.setTradingTimeMode(value as 'device' | 'broker')}
+          >
+            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="device">ساعت دستگاه</SelectItem>
+              <SelectItem value="broker">ساعت بروکر</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingRow>
+        {store.tradingTimeMode === 'broker' && (
+          <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Clock className="w-4 h-4 text-primary" />
+              اختلاف ساعت بروکر با ساعت گوشی
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                اختلاف ساعت بروکر نسبت به ساعت فعلی دستگاه را انتخاب کنید؛ این روش در اندروید بدون ورود عدد با کیبورد کار می‌کند.
+              </p>
+              <Select
+                value={String(brokerDeviceDifferenceMinutes)}
+                onValueChange={value => {
+                  const difference = Number(value);
+                  if (Number.isFinite(difference)) {
+                    store.setBrokerUtcOffsetMinutes(deviceUtcOffsetMinutes + difference);
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full min-h-11" dir="ltr">
+                  <SelectValue placeholder="اختلاف ساعت را انتخاب کنید" />
+                </SelectTrigger>
+                <SelectContent>
+                  {brokerDeviceDifferenceOptions.map(difference => (
+                    <SelectItem key={difference} value={String(difference)} dir="ltr">
+                      {formatTradingOffset(difference).replace('UTC', '')}
+                      {difference === 0 ? ' — برابر با ساعت گوشی' : difference > 0 ? ' — جلوتر از گوشی' : ' — عقب‌تر از گوشی'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+              <div className="rounded-md bg-background/60 px-2.5 py-2">
+                <span className="text-muted-foreground">ساعت گوشی</span>
+                <strong className="block mt-0.5" dir="ltr">{formatTradingOffset(deviceUtcOffsetMinutes)}</strong>
+              </div>
+              <div className="rounded-md bg-background/60 px-2.5 py-2">
+                <span className="text-muted-foreground">ساعت بروکر</span>
+                <strong className="block mt-0.5" dir="ltr">{formatTradingOffset(store.brokerUtcOffsetMinutes)}</strong>
+              </div>
+              <div className="rounded-md bg-background/60 px-2.5 py-2">
+                <span className="text-muted-foreground">اختلاف انتخاب‌شده</span>
+                <strong className="block mt-0.5" dir="ltr">{formatTradingOffset(brokerDeviceDifferenceMinutes).replace('UTC', '')}</strong>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              مثال: اگر ساعت گوشی UTC+3:30 و ساعت بروکر UTC+2:00 است، گزینهٔ <span className="font-semibold" dir="ltr">-1:30</span> را انتخاب کنید.
+              این تنظیم فقط مبنای نمایش و گزارش‌ها را عوض می‌کند و زمان خام معاملات و بکاپ‌ها را تغییر نمی‌دهد.
+            </p>
+          </div>
+        )}
+        <p className="text-xs text-muted-foreground rounded-md bg-muted/30 border p-3">
+          اگر حساب یا باکس انتخاب‌شده بعداً حذف شود، معامله جدید بدون آن مقدار ایجاد می‌شود و اطلاعات قبلی شما تغییر نمی‌کند.
+        </p>
+      </Section>
+
+      {/* ── ۵. تنظیمات تحلیل */}
       <Section icon={Activity} title={t.settings.analysis} description={t.settings.analysisDesc}>
         <SwitchRow label={t.settings.analysisAutosave} description={t.settings.analysisAutosaveDesc}
           checked={store.analysisAutosave} onChange={store.setAnalysisAutosave} />
@@ -558,6 +788,20 @@ export default function Settings() {
         <SwitchRow label="آخرین تحلیل‌ها" checked={store.dashShowRecentTrades} onChange={store.setDashShowRecentTrades} />
         <SwitchRow label="آخرین ژورنال روزانه" checked={store.dashShowLastJournal} onChange={store.setDashShowLastJournal} />
         <SwitchRow label="میزان پایبندی به استراتژی" checked={store.dashShowAdherence} onChange={store.setDashShowAdherence} />
+       <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+         <div>
+           <p className="text-sm font-medium">پیام داشبورد</p>
+           <p className="text-xs text-muted-foreground mt-0.5">این متن زیر پیام خوش‌آمدگویی نمایش داده می‌شود؛ خالی بگذارید تا متن پیش‌فرض نشان داده شود.</p>
+         </div>
+         <Textarea
+           value={store.dashboardMessage}
+           onChange={e => store.setDashboardMessage(e.target.value)}
+           placeholder="مثلاً امروز فقط ستاپ‌های باکیفیت را بررسی کن."
+           maxLength={240}
+           className="min-h-[80px] bg-background"
+         />
+         <div className="text-left text-[10px] text-muted-foreground">{store.dashboardMessage.length}/۲۴۰</div>
+       </div>
       </Section>
 
       {/* ── ۷. تنظیمات اعلان‌ها */}
@@ -657,6 +901,16 @@ export default function Settings() {
               <span className="font-medium">{t.settings.localStorage}</span>
             </div>
           </div>
+           <div className="pt-2 border-t">
+             <a
+               href={`${import.meta.env.BASE_URL}tradermind-user-guide-fa.pdf`}
+               download="tradermind-user-guide-fa.pdf"
+               className="inline-flex w-full items-center justify-center rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/10"
+             >
+               <Download className="w-4 h-4 me-2" />
+               دانلود راهنمای کامل TraderMind
+             </a>
+           </div>
         </div>
       </Section>
 

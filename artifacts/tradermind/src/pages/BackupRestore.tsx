@@ -335,25 +335,29 @@ export default function BackupRestore() {
             <ShieldCheck className="w-3 h-3" />
             فایل پشتیبان فقط در دستگاه شما ذخیره می‌شود. هیچ اطلاعاتی به سرور ارسال نمی‌شود.
           </p>
+           <p className="text-xs text-muted-foreground mt-2 rounded-md border border-primary/20 bg-primary/5 p-3">
+             در اندروید، فایل ابتدا به‌صورت قطعی در مسیر Documents/TraderMind/Backups ذخیره می‌شود و بعد پنجره «ذخیره یا ارسال» باز می‌شود.
+             اگر پنجره را ببندید، فایل همچنان در همان مسیر قابل مشاهده است؛ از برنامه Files وارد Documents و سپس TraderMind و Backups شوید.
+           </p>
         </CardContent>
       </Card>
 
-      {/* ──── خروجی Excel ──── */}
+       {/* ──── خروجی سازگار با Excel ──── */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Layers className="w-5 h-5 text-emerald-500" />
-            خروجی Excel
+             خروجی Spreadsheet / Excel
           </CardTitle>
           <CardDescription>
-            فهرست کامل معاملات خود را به فرمت Excel (.xlsx) دانلود کنید — شامل تمام جزئیات، نتایج و یادداشت‌ها.
+             تمام داده‌ها را در یک فایل Excel چندبرگه دریافت کنید؛ شامل معاملات، حساب‌ها، باکس‌ها، تحلیل‌ها، ژورنال‌ها و تصاویر.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between p-4 border rounded-lg bg-muted/20">
             <div>
-              <p className="font-medium">دانلود فایل Excel</p>
-              <p className="text-sm text-muted-foreground">مناسب برای آنالیز در Excel یا Google Sheets</p>
+               <p className="font-medium">دانلود Spreadsheet کامل</p>
+               <p className="text-sm text-muted-foreground">۶ شیت داده‌ای با پشتیبانی از تصویر و Excel</p>
             </div>
             <Button
               onClick={handleExcelExport}
@@ -363,7 +367,7 @@ export default function BackupRestore() {
             >
               {exportingExcel
                 ? <><RefreshCcw className="w-4 h-4 animate-spin" /> در حال ساخت...</>
-                : <><Download className="w-4 h-4" /> دانلود Excel</>
+                 : <><Download className="w-4 h-4" /> دانلود Excel</>
               }
             </Button>
           </div>
@@ -378,7 +382,7 @@ export default function BackupRestore() {
             بازیابی اطلاعات
           </CardTitle>
           <CardDescription>
-            اطلاعات را از یک فایل پشتیبان قبلی بازیابی کنید. فرمت‌های پشتیبانی‌شده: ZIP و JSON
+             اطلاعات را از یک فایل پشتیبان قبلی بازیابی کنید. فرمت‌های پشتیبانی‌شده: GZ، ZIP و JSON
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -392,11 +396,11 @@ export default function BackupRestore() {
               <FileArchive className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
               <p className="font-medium mb-1">انتخاب فایل پشتیبان</p>
               <p className="text-sm text-muted-foreground">روی اینجا کلیک کنید یا فایل را بکشید</p>
-              <p className="text-xs text-muted-foreground mt-2">پسوند مجاز: .zip یا .json</p>
+               <p className="text-xs text-muted-foreground mt-2">پسوند مجاز: .gz، .zip یا .json</p>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".zip,.json"
+                 accept=".gz,.tradermind-backup.gz,.zip,.json"
                 onChange={handleFileSelect}
                 className="hidden"
               />

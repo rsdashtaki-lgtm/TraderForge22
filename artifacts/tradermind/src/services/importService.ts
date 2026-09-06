@@ -6,6 +6,7 @@
 
 import { db, Trade, defaultPostTradeReview } from '../db/database';
 import { tradeService } from './tradeService';
+import { normalizeImportedTradeFields } from '../lib/tradeClassification';
 
 // ─── Column mapping ──────────────────────────────────────────────────────────
 
@@ -183,6 +184,12 @@ function parseTimestamp(val: string): number | null {
   return null;
 }
 
+function parseOptionalNumber(value: string | null | undefined): number | null {
+  if (value == null || value.trim() === '') return null;
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 // ─── Validate a mapped record ─────────────────────────────────────────────────
 
 function validateRecord(
@@ -297,21 +304,21 @@ export async function importCSV(
     const openedAt = m.openedAt ? (parseTimestamp(m.openedAt) ?? now) : now;
 
     try {
-      await tradeService.createTrade({
+      const importedTrade: Partial<Trade> = {
         symbol: (m.symbol ?? '').toUpperCase().trim(),
         direction,
         entryPrice,
-        exitPrice: m.exitPrice ? parseFloat(m.exitPrice) || null : null,
-        stopLoss: m.stopLoss ? parseFloat(m.stopLoss) || 0 : 0,
-        takeProfit: m.takeProfit ? parseFloat(m.takeProfit) || null : null,
-        positionSize: m.positionSize ? parseFloat(m.positionSize) || null : null,
-        profitLoss: m.profitLoss ? parseFloat(m.profitLoss) || null : null,
-        rMultiple: m.rMultiple ? parseFloat(m.rMultiple) || null : null,
-        riskPercentage: m.riskPercentage ? parseFloat(m.riskPercentage) || null : null,
-        riskAmount: m.riskAmount ? parseFloat(m.riskAmount) || null : null,
-        fees: m.fees ? parseFloat(m.fees) || null : null,
+        exitPrice: parseOptionalNumber(m.exitPrice),
+        stopLoss: parseOptionalNumber(m.stopLoss) ?? 0,
+        takeProfit: parseOptionalNumber(m.takeProfit),
+        positionSize: parseOptionalNumber(m.positionSize),
+        profitLoss: parseOptionalNumber(m.profitLoss),
+        rMultiple: parseOptionalNumber(m.rMultiple),
+        riskPercentage: parseOptionalNumber(m.riskPercentage),
+        riskAmount: parseOptionalNumber(m.riskAmount),
+        fees: parseOptionalNumber(m.fees),
         result: normaliseResult(m.result ?? '') ?? 'open',
-        status: m.exitPrice ? 'closed' : 'open',
+        status: 'open',
         openedAt,
         closedAt: m.closedAt ? (parseTimestamp(m.closedAt) ?? null) : null,
         market: m.market || null,
@@ -321,6 +328,10 @@ export async function importCSV(
         tradingSession: m.tradingSession || null,
         setupType: m.setupType || null,
         tags: m.tags ? JSON.stringify(m.tags.split(/[,;،]/).map(t => t.trim()).filter(Boolean)) : '[]',
+      };
+      await tradeService.createTrade({
+        ...importedTrade,
+        ...normalizeImportedTradeFields(importedTrade),
       });
       imported++;
     } catch (e) {
@@ -414,20 +425,20 @@ export async function importJSON(
     }
 
     try {
-      await tradeService.createTrade({
+      const importedTrade: Partial<Trade> = {
         symbol,
         direction,
         entryPrice,
-        exitPrice: r.exitPrice != null ? parseFloat(String(r.exitPrice)) || null : null,
-        stopLoss: parseFloat(String(r.stopLoss ?? r.stop_loss ?? 0)) || 0,
-        takeProfit: r.takeProfit != null ? parseFloat(String(r.takeProfit)) || null : null,
-        positionSize: r.positionSize != null ? parseFloat(String(r.positionSize)) || null : null,
-        profitLoss: r.profitLoss != null ? parseFloat(String(r.profitLoss)) || null : null,
-        rMultiple: r.rMultiple != null ? parseFloat(String(r.rMultiple)) || null : null,
-        riskPercentage: r.riskPercentage != null ? parseFloat(String(r.riskPercentage)) || null : null,
-        riskAmount: r.riskAmount != null ? parseFloat(String(r.riskAmount)) || null : null,
+        exitPrice: r.exitPrice != null ? parseOptionalNumber(String(r.exitPrice)) : null,
+        stopLoss: parseOptionalNumber(String(r.stopLoss ?? r.stop_loss ?? '')) ?? 0,
+        takeProfit: r.takeProfit != null ? parseOptionalNumber(String(r.takeProfit)) : null,
+        positionSize: r.positionSize != null ? parseOptionalNumber(String(r.positionSize)) : null,
+        profitLoss: r.profitLoss != null ? parseOptionalNumber(String(r.profitLoss)) : null,
+        rMultiple: r.rMultiple != null ? parseOptionalNumber(String(r.rMultiple)) : null,
+        riskPercentage: r.riskPercentage != null ? parseOptionalNumber(String(r.riskPercentage)) : null,
+        riskAmount: r.riskAmount != null ? parseOptionalNumber(String(r.riskAmount)) : null,
         result: normaliseResult(String(r.result ?? '')) ?? 'open',
-        status: r.status ? String(r.status) as Trade['status'] : (r.exitPrice ? 'closed' : 'open'),
+        status: r.status ? String(r.status) as Trade['status'] : 'open',
         openedAt,
         closedAt: r.closedAt
           ? (typeof r.closedAt === 'number' ? r.closedAt : parseTimestamp(String(r.closedAt)) ?? null)
@@ -440,6 +451,10 @@ export async function importJSON(
         setupType: r.setupType ? String(r.setupType) : null,
         tags: r.tags ? (Array.isArray(r.tags) ? JSON.stringify(r.tags) : String(r.tags)) : '[]',
         emotions: r.emotions ? (Array.isArray(r.emotions) ? JSON.stringify(r.emotions) : String(r.emotions)) : '[]',
+      };
+      await tradeService.createTrade({
+        ...importedTrade,
+        ...normalizeImportedTradeFields(importedTrade),
       });
       imported++;
     } catch (e) {
@@ -577,11 +592,11 @@ export function parseMT4HTMLReport(html: string): MT4ParseResult {
 
     const fees = Math.abs(comm) + Math.abs(swap);
 
-    trades.push({
+    const importedTrade: Partial<Trade> = {
       symbol,
       direction,
       market: 'Forex',
-      status: closedAt ? 'closed' : 'open',
+      status: 'open',
       result,
       entryPrice: openPx,
       exitPrice: closePx ?? null,
@@ -593,6 +608,10 @@ export function parseMT4HTMLReport(html: string): MT4ParseResult {
       openedAt,
       closedAt: closedAt ?? null,
       notes: `وارد شده از گزارش MT4/MT5`,
+    };
+    trades.push({
+      ...importedTrade,
+      ...normalizeImportedTradeFields(importedTrade),
     });
   }
 
@@ -616,7 +635,7 @@ export async function exportTradesAsCSV(): Promise<string> {
     'id', 'symbol', 'market', 'direction', 'status', 'result',
     'entryPrice', 'exitPrice', 'stopLoss', 'takeProfit',
     'positionSize', 'riskPercentage', 'riskAmount', 'rMultiple',
-    'profitLoss', 'fees', 'openedAt', 'closedAt',
+    'profitLoss', 'fees', 'commission', 'spread', 'openedAt', 'closedAt',
     'tradingSession', 'setupType', 'entryReason', 'lesson', 'notes', 'tags',
   ];
 
@@ -634,7 +653,7 @@ export async function exportTradesAsCSV(): Promise<string> {
     t.id, t.symbol, t.market ?? '', t.direction, t.status, t.result,
     t.entryPrice, t.exitPrice ?? '', t.stopLoss, t.takeProfit ?? '',
     t.positionSize ?? '', t.riskPercentage ?? '', t.riskAmount ?? '', t.rMultiple ?? '',
-    t.profitLoss ?? '', t.fees ?? '', dateStr(t.openedAt), dateStr(t.closedAt),
+    t.profitLoss ?? '', t.fees ?? '', t.commission ?? '', t.spread ?? '', dateStr(t.openedAt), dateStr(t.closedAt),
     t.tradingSession ?? '', t.setupType ?? '', t.entryReason ?? '', t.lesson ?? '',
     t.notes ?? '', (() => { try { return JSON.parse(t.tags ?? '[]').join(';'); } catch { return ''; } })(),
   ].map(escapeCSV).join(','));

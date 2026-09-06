@@ -24,6 +24,7 @@ import {
   SmartReport,
 } from '../services/psychologyService';
 import { getByDay, getByHour, getBySession, getOvertradingAnalysis } from '../services/performanceService';
+import { useAppStore } from '../store/useAppStore';
 import { db, DailyJournal } from '../db/database';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -422,6 +423,8 @@ function RecurringMistakesTab() {
 // ────────────────────────────────────────────────────────────────────────────
 
 function TradingHabitsTab() {
+  const tradingTimeMode = useAppStore(s => s.tradingTimeMode);
+  const brokerUtcOffsetMinutes = useAppStore(s => s.brokerUtcOffsetMinutes);
   const [byDay, setByDay] = useState<ReturnType<typeof getByDay>>([]);
   const [byHour, setByHour] = useState<ReturnType<typeof getByHour>>([]);
   const [bySession, setBySession] = useState<ReturnType<typeof getBySession>>([]);
@@ -442,7 +445,7 @@ function TradingHabitsTab() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [tradingTimeMode, brokerUtcOffsetMinutes]);
 
   if (loading) return <LoadingState message="در حال بارگذاری عادات..." />;
 

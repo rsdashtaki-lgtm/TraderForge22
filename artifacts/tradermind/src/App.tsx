@@ -1,7 +1,9 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState, type ComponentType } from 'react';
+import { VideoTemplate } from './components/video/VideoTemplate';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { App as CapacitorApp } from '@capacitor/app';
 import { Toaster } from '@/components/ui/toaster';
-import { Toaster as SonnerToaster } from 'sonner';
+import { Toaster as SonnerToaster, toast } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
 
@@ -23,55 +25,85 @@ function useElectronHashLocation(): [string, (to: string) => void] {
   const navigate = useCallback((to: string) => { window.location.hash = to; }, []);
   return [path, navigate];
 }
-import { toast } from 'sonner';
-
 import { ThemeProvider } from './components/ThemeProvider';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LockScreen } from './components/LockScreen';
 import { seedInitialData } from './services/seedService';
 import { useSecurityStore } from './security/useSecurityStore';
+import { NavigationGuardProvider } from './navigation/NavigationGuard';
+import { reminderService } from './services/reminderService';
+import { normalizeExistingTrades } from './services/tradeNormalizationService';
+import { clearChunkRecoveryMarker, isChunkLoadError, recoverFromChunkLoadError } from './lib/runtimeRecovery';
+import ScreenshotErrorBoundary from './components/errorBoundaries/ScreenshotErrorBoundary';
 
 // ── Lazy-loaded pages (code splitting برای بارگذاری سریع‌تر)
-const Dashboard        = lazy(() => import('./pages/Dashboard'));
-const StrategiesList   = lazy(() => import('./pages/StrategiesList'));
-const StrategyBuilder  = lazy(() => import('./pages/StrategyBuilder'));
-const AnalysisList     = lazy(() => import('./pages/AnalysisList'));
-const NewAnalysis      = lazy(() => import('./pages/NewAnalysis'));
-const SessionRunner    = lazy(() => import('./pages/SessionRunner'));
-const TradeJournal     = lazy(() => import('./pages/TradeJournal'));
-const NewTrade         = lazy(() => import('./pages/NewTrade'));
-const TradeDetail      = lazy(() => import('./pages/TradeDetail'));
-const DailyJournalList = lazy(() => import('./pages/DailyJournalList'));
-const DailyEntry       = lazy(() => import('./pages/DailyEntry'));
-const Reports          = lazy(() => import('./pages/Reports'));
-const SymbolsList      = lazy(() => import('./pages/SymbolsList'));
-const SymbolKnowledge  = lazy(() => import('./pages/SymbolKnowledge'));
-const BackupRestore    = lazy(() => import('./pages/BackupRestore'));
-const Settings         = lazy(() => import('./pages/Settings'));
-const NotFound         = lazy(() => import('./pages/not-found'));
-const PostTradeReview  = lazy(() => import('./pages/PostTradeReview'));
-const LiveTrade        = lazy(() => import('./pages/LiveTrade'));
-const EdgeAnalytics    = lazy(() => import('./pages/EdgeAnalytics'));
-const TraderProfile    = lazy(() => import('./pages/TraderProfile'));
-const KnowledgeBase    = lazy(() => import('./pages/KnowledgeBase'));
-const TradeReplay            = lazy(() => import('./pages/TradeReplay'));
-const MarketContextList      = lazy(() => import('./pages/MarketContextList'));
-const MarketContextSession   = lazy(() => import('./pages/MarketContextSession'));
-const DataImport             = lazy(() => import('./pages/DataImport'));
-const DataQuality            = lazy(() => import('./pages/DataQuality'));
-const SearchPage             = lazy(() => import('./pages/Search'));
-const DevDiagnostics         = import.meta.env.DEV ? lazy(() => import('./pages/DevDiagnostics')) : null;
-const RiskManagement         = lazy(() => import('./pages/RiskManagement'));
-const RiskPlanner            = lazy(() => import('./pages/RiskPlanner'));
-const RiskProfile            = lazy(() => import('./pages/RiskProfile'));
-const PerformanceDashboard   = lazy(() => import('./pages/PerformanceDashboard'));
-const ScreenshotIntelligence = lazy(() => import('./pages/ScreenshotIntelligence'));
-const AdvancedAnalytics      = lazy(() => import('./pages/AdvancedAnalytics'));
-const TradeInsights          = lazy(() => import('./pages/TradeInsights'));
-const TradingPsychology      = lazy(() => import('./pages/TradingPsychology'));
-const Accounts               = lazy(() => import('./pages/Accounts'));
-const TradingBoxes           = lazy(() => import('./pages/TradingBoxes'));
+function lazyWithRecovery<T extends ComponentType<any>>(
+  importer: () => Promise<{ default: T }>,
+  pageName: string,
+) {
+  return lazy(async () => {
+    try {
+      const module = await importer();
+      return module;
+    } catch (error) {
+      if (isChunkLoadError(error)) {
+        console.error(`[TraderMind] lazy chunk failed: ${pageName}`, error);
+        recoverFromChunkLoadError();
+      }
+      throw error;
+    }
+  });
+}
+
+const Dashboard        = lazyWithRecovery(() => import('./pages/Dashboard'), 'Dashboard');
+const StrategiesList   = lazyWithRecovery(() => import('./pages/StrategiesList'), 'StrategiesList');
+const StrategyBuilder  = lazyWithRecovery(() => import('./pages/StrategyBuilder'), 'StrategyBuilder');
+const AnalysisList     = lazyWithRecovery(() => import('./pages/AnalysisList'), 'AnalysisList');
+const NewAnalysis      = lazyWithRecovery(() => import('./pages/NewAnalysis'), 'NewAnalysis');
+const SessionRunner    = lazyWithRecovery(() => import('./pages/SessionRunner'), 'SessionRunner');
+const TradeJournal     = lazyWithRecovery(() => import('./pages/TradeJournal'), 'TradeJournal');
+const NewTrade         = lazyWithRecovery(() => import('./pages/NewTrade'), 'NewTrade');
+const TradeDetail      = lazyWithRecovery(() => import('./pages/TradeDetail'), 'TradeDetail');
+const DailyJournalList = lazyWithRecovery(() => import('./pages/DailyJournalList'), 'DailyJournalList');
+const DailyEntry       = lazyWithRecovery(() => import('./pages/DailyEntry'), 'DailyEntry');
+const Reports          = lazyWithRecovery(() => import('./pages/Reports'), 'Reports');
+const SymbolsList      = lazyWithRecovery(() => import('./pages/SymbolsList'), 'SymbolsList');
+const SymbolKnowledge  = lazyWithRecovery(() => import('./pages/SymbolKnowledge'), 'SymbolKnowledge');
+const BackupRestore    = lazyWithRecovery(() => import('./pages/BackupRestore'), 'BackupRestore');
+const Settings         = lazyWithRecovery(() => import('./pages/Settings'), 'Settings');
+const NotFound         = lazyWithRecovery(() => import('./pages/not-found'), 'NotFound');
+const PostTradeReview  = lazyWithRecovery(() => import('./pages/PostTradeReview'), 'PostTradeReview');
+const LiveTrade        = lazyWithRecovery(() => import('./pages/LiveTrade'), 'LiveTrade');
+const EdgeAnalytics    = lazyWithRecovery(() => import('./pages/EdgeAnalytics'), 'EdgeAnalytics');
+const TraderProfile    = lazyWithRecovery(() => import('./pages/TraderProfile'), 'TraderProfile');
+const KnowledgeBase    = lazyWithRecovery(() => import('./pages/KnowledgeBase'), 'KnowledgeBase');
+const TradeReplay      = lazyWithRecovery(() => import('./pages/TradeReplay'), 'TradeReplay');
+const MarketContextList = lazyWithRecovery(() => import('./pages/MarketContextList'), 'MarketContextList');
+const MarketContextSession = lazyWithRecovery(() => import('./pages/MarketContextSession'), 'MarketContextSession');
+const DataImport       = lazyWithRecovery(() => import('./pages/DataImport'), 'DataImport');
+const DataQuality      = lazyWithRecovery(() => import('./pages/DataQuality'), 'DataQuality');
+const SearchPage       = lazyWithRecovery(() => import('./pages/Search'), 'Search');
+const DevDiagnostics   = import.meta.env.DEV ? lazyWithRecovery(() => import('./pages/DevDiagnostics'), 'DevDiagnostics') : null;
+const RiskManagement   = lazyWithRecovery(() => import('./pages/RiskManagement'), 'RiskManagement');
+const RiskPlanner      = lazyWithRecovery(() => import('./pages/RiskPlanner'), 'RiskPlanner');
+const RiskProfile      = lazyWithRecovery(() => import('./pages/RiskProfile'), 'RiskProfile');
+const PerformanceDashboard = lazyWithRecovery(() => import('./pages/PerformanceDashboard'), 'PerformanceDashboard');
+const ScreenshotIntelligence = lazyWithRecovery(() => import('./pages/ScreenshotIntelligence'), 'ScreenshotIntelligence');
+const AdvancedAnalytics = lazyWithRecovery(() => import('./pages/AdvancedAnalytics'), 'AdvancedAnalytics');
+const TradeInsights    = lazyWithRecovery(() => import('./pages/TradeInsights'), 'TradeInsights');
+const TradingPsychology = lazyWithRecovery(() => import('./pages/TradingPsychology'), 'TradingPsychology');
+const Accounts         = lazyWithRecovery(() => import('./pages/Accounts'), 'Accounts');
+const TradingBoxes     = lazyWithRecovery(() => import('./pages/TradingBoxes'), 'TradingBoxes');
+const Reminders        = lazyWithRecovery(() => import('./pages/Reminders'), 'Reminders');
+
+function ScreenshotRoute() {
+  return (
+    <ScreenshotErrorBoundary>
+      <ScreenshotIntelligence />
+    </ScreenshotErrorBoundary>
+  );
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -133,9 +165,18 @@ function AutoLockManager() {
       }
     };
 
-    // قفل فوری هنگام رفتن به Background
+    const isEditingText = () => {
+      const active = document.activeElement;
+      return active instanceof HTMLInputElement
+        || active instanceof HTMLTextAreaElement
+        || active instanceof HTMLElement && active.isContentEditable;
+    };
+
+    // On Android the keyboard's voice-typing UI can briefly change WebView
+    // visibility while the text field remains focused. Do not lock over an
+    // active editor in that transient browser event.
     const handleVisibilityChange = () => {
-      if (document.hidden && autoLockMinutes === 0) {
+      if (document.hidden && autoLockMinutes === 0 && !isEditingText()) {
         lock();
       }
     };
@@ -143,6 +184,17 @@ function AutoLockManager() {
     const events = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click'] as const;
     events.forEach(e => document.addEventListener(e, resetTimer, { passive: true }));
     document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Capacitor's app-state event represents an actual native background
+    // transition and is therefore safer than using WebView visibility alone.
+    let disposed = false;
+    let removeAppStateListener: (() => void) | null = null;
+    CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (!isActive && autoLockMinutes === 0) lock();
+    }).then(handle => {
+      if (disposed) handle.remove();
+      else removeAppStateListener = () => { void handle.remove(); };
+    });
 
     // شروع تایمر
     if (autoLockMinutes > 0) {
@@ -153,6 +205,8 @@ function AutoLockManager() {
       if (timer) clearTimeout(timer);
       events.forEach(e => document.removeEventListener(e, resetTimer));
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      disposed = true;
+      removeAppStateListener?.();
     };
   }, [isEnabled, autoLockMinutes, isLocked, lock, touchActivity]);
 
@@ -205,10 +259,11 @@ function Router() {
           <Route path="/risk/profile" component={RiskProfile} />
 
           <Route path="/analytics/psychology" component={TradingPsychology} />
-          <Route path="/screenshots" component={ScreenshotIntelligence} />
+          <Route path="/screenshots" component={ScreenshotRoute} />
 
           <Route path="/accounts" component={Accounts} />
           <Route path="/trading-boxes" component={TradingBoxes} />
+          <Route path="/reminders" component={Reminders} />
 
           <Route path="/backup" component={BackupRestore} />
           <Route path="/settings" component={Settings} />
@@ -224,52 +279,30 @@ function Router() {
   );
 }
 
-// ── جلوگیری از خروج ناخواسته PWA با دکمه برگشت ──────────
-function BackButtonGuard() {
-  const exitPendingRef = useRef(false);
-
-  useEffect(() => {
-    // یک ورودی اضافه در تاریخچه ایجاد می‌کنیم تا همیشه یک «پشتوانه» وجود داشته باشد
-    const sentinelUrl = window.location.href;
-    window.history.replaceState({ __tmSentinel: true }, '', sentinelUrl);
-    window.history.pushState({ __tmEntry: true }, '', sentinelUrl);
-
-    const onPopState = (e: PopStateEvent) => {
-      if (e.state?.__tmSentinel) {
-        // به پایین ترین لایه تاریخچه رسیدیم — از خروج جلوگیری می‌کنیم
-        window.history.pushState({ __tmEntry: true }, '', window.location.href);
-
-        if (!exitPendingRef.current) {
-          exitPendingRef.current = true;
-          toast('برای خروج دوباره برگشت را بزنید', { duration: 2000 });
-          setTimeout(() => { exitPendingRef.current = false; }, 2000);
-        }
-      }
-      // در غیر این صورت wouter خودش مسیریابی را مدیریت می‌کند
-    };
-
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, []);
-
-  return null;
-}
-
 // ── محتوای اصلی با بررسی قفل ─────────────────────────────
 function AppContent() {
   const { isEnabled, isLocked } = useSecurityStore();
 
   useEffect(() => {
-    void seedInitialData().catch((error) => {
+    void seedInitialData().then(async () => {
+      const normalized = await normalizeExistingTrades();
+      if (normalized.updated > 0) {
+        toast.success(
+          `${normalized.updated} معامله اصلاح شد؛ ${normalized.closed} معامله بسته و ${normalized.sessionsDetected} سشن تشخیص داده شد.`,
+        );
+      }
+    }).catch((error) => {
       // Seed داده کمکی توسعه است و نباید شکست آن رابط اصلی برنامه را
       // از کار بیندازد.
-      console.error('[TraderMind seed]', error);
+      console.error('[TraderMind startup]', error);
+    });
+    void reminderService.initialize().catch(error => {
+      console.error('[TraderMind reminders]', error);
     });
   }, []);
 
   return (
     <>
-      <BackButtonGuard />
       <AutoLockManager />
       {/* اگر قفل فعال و بسته باشد، صفحه قفل نمایش داده می‌شود */}
       {isEnabled && isLocked && <LockScreen />}
@@ -280,6 +313,16 @@ function AppContent() {
 
 // ── App اصلی ────────────────────────────────────────────
 function App() {
+  useEffect(() => {
+    // Keep the recovery marker long enough to protect the first navigation
+    // after a reload, then allow a future independent chunk failure to retry.
+    const timer = window.setTimeout(clearChunkRecoveryMarker, 5000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  if (window.location.pathname.includes('/video') || window.location.hash === '#/video') {
+    return <VideoTemplate />;
+  }
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
@@ -289,7 +332,9 @@ function App() {
               hook={window.location.protocol === 'file:' ? useElectronHashLocation : undefined}
               base={window.location.protocol === 'file:' ? undefined : import.meta.env.BASE_URL.replace(/\/$/, '')}
             >
-              <AppContent />
+              <NavigationGuardProvider>
+                <AppContent />
+              </NavigationGuardProvider>
             </WouterRouter>
             <Toaster />
             <SonnerToaster
