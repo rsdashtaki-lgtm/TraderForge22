@@ -1,0 +1,1 @@
+- [GitHub push authentication](github-push-auth.md) — pushes require a valid PAT with repository write access; keep remotes credential-free.
