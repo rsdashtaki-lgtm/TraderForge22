@@ -43,6 +43,12 @@ if (app.isPackaged) {
 }
 
 app.whenReady().then(() => {
+  // نسخه Electron آفلاین است؛ دسترسی رسانه/میکروفون از داخل برنامه ممنوع است.
+  const { session } = require("electron");
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(permission !== "media");
+  });
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => permission !== "media");
   createWindow();
 
   app.on("activate", () => {

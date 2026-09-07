@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { t, formatDateFullFa, toDateStr } from "../lib/i18n";
 import { cn } from "../lib/utils";
 import { useNavigationGuard } from "../navigation/NavigationGuard";
+import { useAppStore } from "../store/useAppStore";
 
 // ================================================================
 // کامپوننت‌های کمکی
@@ -247,6 +248,9 @@ export default function DailyEntry() {
   const [existingId, setExistingId] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedFormRef = useRef<FormData | null>(null);
+  const journalAutosave = useAppStore(s => s.journalAutosave);
+  const journalCustomEmotions = useAppStore(s => s.journalCustomEmotions);
+  const addJournalEmotion = useAppStore(s => s.addJournalEmotion);
 
   // بارگذاری اطلاعات
   useEffect(() => {
@@ -295,9 +299,10 @@ export default function DailyEntry() {
   useEffect(() => {
     if (!hasLoaded) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!journalAutosave) return;
     debounceRef.current = setTimeout(() => saveJournal(form, true), 1500);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [form, hasLoaded]);
+  }, [form, hasLoaded, journalAutosave, saveJournal]);
 
   const update = <K extends keyof FormData>(key: K, value: FormData[K]) =>
     setForm(prev => ({ ...prev, [key]: value }));
@@ -321,6 +326,7 @@ export default function DailyEntry() {
     const trimmed = newEmotion.trim();
     if (!trimmed) return;
     setCustomEmotions(prev => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+    addJournalEmotion(trimmed);
     setForm(prev => ({ ...prev, emotions: [...prev.emotions, trimmed] }));
     setNewEmotion('');
     setShowAddEmotion(false);
@@ -338,7 +344,11 @@ export default function DailyEntry() {
     }
   };
 
-  const allEmotions = [...t.defaultEmotions, ...customEmotions.filter(e => !t.defaultEmotions.includes(e))];
+  const allEmotions = [
+    ...t.defaultEmotions,
+    ...journalCustomEmotions.filter(e => !t.defaultEmotions.includes(e)),
+    ...customEmotions.filter(e => !t.defaultEmotions.includes(e) && !journalCustomEmotions.includes(e)),
+  ];
   const displayDate = date ? formatDateFullFa(date) : '';
   const isToday = date === toDateStr(new Date());
 

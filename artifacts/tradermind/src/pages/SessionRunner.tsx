@@ -22,6 +22,7 @@ import { extractInitialFeatures, findSimilarScreenshots } from "../services/visu
 import VisualSimilarityPanel from "../components/VisualSimilarityPanel";
 import StoredImage from "../components/StoredImage";
 import { TradeScreenshot } from "../types/screenshot";
+import { useAppStore } from "../store/useAppStore";
 
 type ViewMode = 'runner' | 'phaseSummary' | 'finalDecision' | 'finished';
 
@@ -43,6 +44,12 @@ export default function SessionRunner() {
   const [allTrades, setAllTrades] = useState<Trade[]>([]);
   // ردیابی تعامل واقعی کاربر — auto-advance فقط بعد از پاسخ‌دهی فعال
   const hasInteractedRef = useRef(false);
+  const analysisAutosave = useAppStore(s => s.analysisAutosave);
+  const analysisShowNextStep = useAppStore(s => s.analysisShowNextStep);
+  const analysisPhaseSummary = useAppStore(s => s.analysisPhaseSummary);
+  const analysisConfirmPhase = useAppStore(s => s.analysisConfirmPhase);
+  const analysisProgressBar = useAppStore(s => s.analysisProgressBar);
+  const showPhaseSummary = analysisPhaseSummary || analysisConfirmPhase;
 
   useEffect(() => { if (id) loadData(); }, [id]);
   useEffect(() => { db.trades.toArray().then(setAllTrades); }, []);
@@ -85,11 +92,18 @@ export default function SessionRunner() {
     await analysisService.updateSession(id!, { stepResults: JSON.stringify(newResults) });
   };
 
+  const persistDraft = async (nextResults = results, nextNotes = freeNotes) => {
+    await analysisService.updateSession(id!, {
+      stepResults: JSON.stringify(nextResults),
+      notes: nextNotes || null,
+    });
+  };
+
   const handleUpdateResult = (stepId: string, value: any) => {
     hasInteractedRef.current = true;
     const newResults = { ...results, [stepId]: { value, answeredAt: Date.now() } };
     setResults(newResults);
-    saveResults(newResults);
+    if (analysisAutosave) void saveResults(newResults);
   };
 
   const handleMultiSelectToggle = (stepId: string, option: string) => {
@@ -113,7 +127,7 @@ export default function SessionRunner() {
             const old = current[stepId]?.value;
             const existing = Array.isArray(old) ? old : old ? [old] : [];
             const newResults = { ...current, [stepId]: { value: [...existing, ...dataUrls], answeredAt: Date.now() } };
-            void saveResults(newResults);
+            if (analysisAutosave) void saveResults(newResults);
             return newResults;
           });
           hasInteractedRef.current = true;
@@ -137,7 +151,7 @@ export default function SessionRunner() {
         const old = current[imageStepId]?.value;
         const existing = Array.isArray(old) ? old : old ? [old] : [];
         const newResults = { ...current, [imageStepId]: { value: [...existing, ...dataUrls], answeredAt: Date.now() } };
-        void saveResults(newResults);
+        if (analysisAutosave) void saveResults(newResults);
         return newResults;
       });
       hasInteractedRef.current = true;
@@ -186,6 +200,7 @@ export default function SessionRunner() {
 
   const handleBack = async () => {
     if (currentPhaseIndex === 0) return;
+    await persistDraft();
     const newIdx = currentPhaseIndex - 1;
     // ریست تعامل — کاربر باید دوباره در فاز قبلی چیزی پاسخ دهد تا auto-advance فعال شود
     hasInteractedRef.current = false;
@@ -194,53 +209,67 @@ export default function SessionRunner() {
     await analysisService.updateSession(id!, { currentPhaseId: phases[newIdx].id });
   };
 
+  const goToNextPhase = async () => {
+    await persistDraft();
+    if (currentPhaseIndex < phases.length - 1) {
+      const newIdx = currentPhaseIndex + 1;
+      hasInteractedRef.current = false;
+      setCurrentPhaseIndex(newIdx);
+      setViewMode('runner');
+      await analysisService.updateSession(id!, { currentPhaseId: phases[newIdx].id });
+    } else {
+      setViewMode('finalDecision');
+    }
+  };
+
   // رفتن خودکار به مرحله بعد فقط پس از تعامل فعال کاربر با این فاز
   // جلوگیری از: loop بین فازهای all-optional، پرش خودکار هنگام بارگذاری
   useEffect(() => {
     if (!currentPhase) return;
     if (!isPhaseComplete) return;
     if (!hasInteractedRef.current) return;
+    if (!analysisShowNextStep) return;
 
     const timer = setTimeout(() => {
-      if (currentPhaseIndex < phases.length - 1) {
+      if (showPhaseSummary) {
         setViewMode('phaseSummary');
       } else {
-        setViewMode('finalDecision');
+        void goToNextPhase();
       }
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [isPhaseComplete, currentPhaseIndex, currentPhase, phases.length]);
+  }, [isPhaseComplete, currentPhaseIndex, currentPhase, phases.length, analysisShowNextStep, showPhaseSummary]);
+
   const handleNext = async () => {
-    if (currentPhaseIndex < phases.length - 1) {
+    if (showPhaseSummary) {
+      await persistDraft();
       setViewMode('phaseSummary');
     } else {
-      setViewMode('finalDecision');
+      await goToNextPhase();
     }
   };
 
   const handleConfirmNextPhase = async () => {
-    const newIdx = currentPhaseIndex + 1;
-    // ریست تعامل — تا در فاز جدید auto-advance بدون تعامل کاربر فعال نشود
-    hasInteractedRef.current = false;
-    setCurrentPhaseIndex(newIdx);
-    setViewMode('runner');
-    await analysisService.updateSession(id!, { currentPhaseId: phases[newIdx].id });
+    await goToNextPhase();
   };
 
   const handlePause = async () => {
+    await persistDraft();
     toast.success('تحلیل متوقف شد — می‌توانید از لیست تحلیل‌ها ادامه دهید.');
     setLocation('/analysis');
   };
 
   const handleAbandon = async () => {
     if (!confirm('این تحلیل را رها کنید؟ اطلاعات ذخیره خواهد شد اما تحلیل ناتمام می‌ماند.')) return;
+    await persistDraft();
     await analysisService.abandonSession(id!);
     toast.success('جلسه تحلیل رها شد');
     loadData();
   };
 
   const handleFinalDecision = async (choice: 'execute' | 'no-trade' | 'wait' | 'cancelled') => {
+    await persistDraft();
     const finalDecision = JSON.stringify({ choice, reason: finalDecisionReason });
     await analysisService.updateSession(id!, { finalDecision } as any);
 
@@ -567,7 +596,7 @@ export default function SessionRunner() {
         })}
       </div>
 
-      <Progress value={overallProgress} className="h-1 mb-6 shrink-0" />
+      {analysisProgressBar && <Progress value={overallProgress} className="h-1 mb-6 shrink-0" />}
 
       {/* کارت‌های گام‌ها */}
       <div className="flex-1 overflow-y-auto min-h-0 pb-28">
@@ -580,7 +609,9 @@ export default function SessionRunner() {
             <Textarea
               value={freeNotes}
               onChange={e => setFreeNotes(e.target.value)}
-              onBlur={() => void analysisService.updateSession(id!, { notes: freeNotes || null })}
+              onBlur={() => {
+                if (analysisAutosave) void analysisService.updateSession(id!, { notes: freeNotes || null });
+              }}
               placeholder="سناریوی بازار و فرضیه اولیه خود را بنویسید…"
               className="min-h-[100px] bg-background"
             />

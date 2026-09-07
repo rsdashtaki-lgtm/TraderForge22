@@ -122,12 +122,12 @@ app.whenReady().then(() => {
       height: size.height,
     };
   });
-  // Web Speech در Electron برای شروع ضبط به مجوز media نیاز دارد.
-  // فقط میکروفون را اجازه می‌دهیم؛ دسترسی دوربین یا مجوزهای دیگر باز نمی‌شود.
+  // نسخه Electron کاملاً آفلاین است؛ دسترسی میکروفون/رسانه نباید از داخل
+  // رابط برنامه درخواست یا اعطا شود. قابلیت‌های صوتی فقط برای Web مجازند.
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === 'media');
+    callback(permission !== 'media');
   });
-  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => permission === 'media');
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => permission !== 'media');
   createWindow();
 
   app.on('activate', () => {

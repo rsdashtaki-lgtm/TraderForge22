@@ -171,6 +171,13 @@ export default function Dashboard() {
   const tradingTimeMode = useAppStore(s => s.tradingTimeMode);
   const brokerUtcOffsetMinutes = useAppStore(s => s.brokerUtcOffsetMinutes);
   const dashboardMessage = useAppStore(s => s.dashboardMessage);
+  const dashShowTrades = useAppStore(s => s.dashShowTrades);
+  const dashShowWinRate = useAppStore(s => s.dashShowWinRate);
+  const dashShowPnl = useAppStore(s => s.dashShowPnl);
+  const dashShowAvgR = useAppStore(s => s.dashShowAvgR);
+  const dashShowRecentTrades = useAppStore(s => s.dashShowRecentTrades);
+  const dashShowLastJournal = useAppStore(s => s.dashShowLastJournal);
+  const dashShowAdherence = useAppStore(s => s.dashShowAdherence);
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [rangeKey, setRangeKey] = useState<RangeKey>("week");
@@ -393,6 +400,7 @@ export default function Dashboard() {
 
   // ── وضعیت: کاربر جدید؟
   const isNewUser = data && data.strategies.length === 0 && data.trades.length === 0 && data.journals.length === 0;
+  const showPerformanceSummary = dashShowTrades || dashShowWinRate || dashShowPnl || dashShowAvgR;
 
   // ── Backup سریع
   const handleQuickBackup = async () => {
@@ -640,7 +648,7 @@ export default function Dashboard() {
       </div>
 
       {/* ━━━━━━━━━━━━━━━━ 4. خلاصه عملکرد ━━━━━━━━━━━━━━━━ */}
-      <Card>
+      {showPerformanceSummary && <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <CardTitle className="text-base flex items-center gap-2">
@@ -695,22 +703,22 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <StatCard
+              {dashShowTrades && <StatCard
                 label="تعداد معاملات"
                 value={rangedStats.total.toLocaleString("fa-IR")}
                 sub={`${rangedStats.closedCount.toLocaleString("fa-IR")} بسته`}
-              />
-              <StatCard
+              />}
+              {dashShowWinRate && <StatCard
                 label="درصد برد"
                 value={`${rangedStats.winRate.toFixed(1)}٪`}
                 valueClass={rangedStats.winRate >= 50 ? "text-emerald-500" : "text-rose-500"}
-              />
-              <StatCard
+              />}
+              {dashShowPnl && <StatCard
                 label="سود / ضرر"
                 value={`${rangedStats.totalPnl >= 0 ? "+" : ""}$${rangedStats.totalPnl.toFixed(2)}`}
                 valueClass={rangedStats.totalPnl >= 0 ? "text-emerald-500" : "text-rose-500"}
-              />
-              <StatCard
+              />}
+              {dashShowAvgR && <StatCard
                 label="میانگین R"
                 value={rangedStats.avgR != null ? `${rangedStats.avgR.toFixed(2)}R` : "—"}
                 valueClass={
@@ -718,11 +726,11 @@ export default function Dashboard() {
                   : rangedStats.avgR >= 0 ? "text-emerald-500"
                   : "text-rose-500"
                 }
-              />
+              />}
             </div>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* ━━━━━━━━━━━━━━━━ 4b. کارت‌های KPI پیشرفته ━━━━━━━━━━━━━━━━ */}
       {extendedStats && (
@@ -877,10 +885,10 @@ export default function Dashboard() {
       )}
 
       {/* ━━━━━━━━━━━━━━━━ 5. معاملات اخیر + ژورنال‌ها ━━━━━━━━━━━━━━━━ */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      {(dashShowRecentTrades || dashShowLastJournal) && <div className={`grid gap-4 ${dashShowRecentTrades && dashShowLastJournal ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}>
 
         {/* آخرین معاملات */}
-        <Card className="flex flex-col">
+        {dashShowRecentTrades && <Card className="flex flex-col">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-base flex items-center gap-2">
@@ -928,10 +936,10 @@ export default function Dashboard() {
               </div>
             )}
           </CardContent>
-        </Card>
+        </Card>}
 
         {/* آخرین ژورنال‌ها */}
-        <Card className="flex flex-col">
+        {dashShowLastJournal && <Card className="flex flex-col">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-base flex items-center gap-2">
@@ -970,11 +978,11 @@ export default function Dashboard() {
               </div>
             )}
           </CardContent>
-        </Card>
-      </div>
+        </Card>}
+      </div>}
 
       {/* ━━━━━━━━━━━━━━━━ 6. آخرین استراتژی + پایبندی ━━━━━━━━━━━━━━━━ */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      {(lastUsedStrategy || dashShowAdherence) && <div className={`grid gap-4 ${lastUsedStrategy && dashShowAdherence ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}>
 
         {/* آخرین استراتژی */}
         {lastUsedStrategy && (
@@ -1002,7 +1010,7 @@ export default function Dashboard() {
         )}
 
         {/* پایبندی به استراتژی */}
-        <Card>
+        {dashShowAdherence && <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
               <Shield className="w-4 h-4 text-primary" /> پایبندی به قوانین استراتژی
@@ -1034,8 +1042,8 @@ export default function Dashboard() {
               </div>
             )}
           </CardContent>
-        </Card>
-      </div>
+        </Card>}
+      </div>}
 
       {/* ━━━━━━━━━━━━━━━━ 7. نمودارهای تحلیلی ━━━━━━━━━━━━━━━━ */}
       {chartsData && (
